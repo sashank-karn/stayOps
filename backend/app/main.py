@@ -24,9 +24,9 @@ app = FastAPI(
     debug=settings.app_debug,
 )
 
-# RAG pipeline router (integrated in feat/api-integration)
-# from backend.app.rag.router import router as rag_router
-# app.include_router(rag_router)
+# Include the RAG pipeline router
+from backend.app.rag.router import router as rag_router
+app.include_router(rag_router)
 
 # CORS so the Next.js dashboard can call the API during development.
 app.add_middleware(
