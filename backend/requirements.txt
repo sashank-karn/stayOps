@@ -1,0 +1,43 @@
+# ---- StayOps AI backend (FastAPI) + RAG Pipeline ----
+# Phase 1: Foundation + RAG document pipeline
+
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+
+# Database (used from Phase 2 onward; declared now so the stack is pinned)
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+alembic==1.14.0
+pgvector==0.3.6
+
+# Auth (Phase 3)
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.17
+
+# ---------- RAG Pipeline ----------
+# Document ingestion
+PyPDF2==3.0.1
+python-pptx==1.0.2
+python-docx==1.1.2
+
+# Text processing & embeddings
+langchain>=0.3.14,<0.4.0
+langchain-core>=0.3.28,<0.4.0
+langchain-community>=0.3.14,<0.4.0
+langchain-text-splitters>=0.3.4,<0.4.0
+langchain-openai>=0.3.0,<0.4.0
+langchain-google-genai>=2.0.8,<3.0.0
+
+# Vector store
+chromadb>=0.6.0
+
+# Testing
+pytest==8.3.4
+httpx==0.28.1
+pytest-asyncio==0.24.0
+reportlab>=4.0.0
+

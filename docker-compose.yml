@@ -1,0 +1,57 @@
+# StayOps AI — local orchestration.
+# Phase 1 provides Postgres (with pgvector) + backend + frontend.
+# Agents run inside the backend process for now; they may be split out later.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: stayops-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stayops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-stayops}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stayops}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: stayops-backend
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app/backend
+      - ./agents:/app/agents
+      - ./shared:/app/shared
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: stayops-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+
+volumes:
+  pgdata:
