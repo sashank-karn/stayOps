@@ -1,6 +1,14 @@
-"""Rent & Collections Agent (Phase 8).
+"""Rent and Collections Agent package — Adarsh Jha (AdarshCodes1221)."""
+from agents.collections.agent import (
+    AGENT_NAME,
+    CollectionsAgent,
+    calculate_tenant_balance,
+    get_portfolio_financial_metrics,
+)
 
-Tracks rent, due dates, and payment status; identifies overdue payments; sends reminders;
-records payment status; escalates long-overdue payments; and generates collection summaries.
-"""
-AGENT_NAME = "collections"
+__all__ = [
+    "AGENT_NAME",
+    "CollectionsAgent",
+    "calculate_tenant_balance",
+    "get_portfolio_financial_metrics",
+]
