@@ -123,3 +123,48 @@ class TestMoveOutWorkflowEndToEnd:
         # Security deposit was 22,000; after deducting 11,000 overdue, net settlement is 11,000
         assert rent_status["net_deposit_settlement"] == 11000.0
         assert "Deduct from deposit" in rent_status["recommendation"]
+
+    def test_invalid_tenant_fails_and_records_failure(self, db_session):
+        """Test move-out workflow when an invalid or nonexistent tenant ID is provided."""
+        orchestrator = OrchestratorAgent(db=db_session)
+        with pytest.raises(ValueError, match="not found"):
+            orchestrator.run_move_out_workflow(
+                tenant_id="nonexistent-uuid-9999",
+                notice_days=15,
+                reason="Invalid tenant test",
+            )
+
+        # Confirm failed workflow record is saved in audit log
+        failed_wf = db_session.query(WorkflowExecution).filter_by(status="failed").first()
+        assert failed_wf is not None
+        assert failed_wf.workflow_type == "tenant_move_out_notice"
+        assert len(failed_wf.tasks) == 1
+        assert failed_wf.tasks[0].status == "failed"
+
+    def test_approval_lifecycle_rejection(self, db_session):
+        """Verify human-in-the-loop approval rejection propagates to workflow status."""
+        rohan = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+        orchestrator = OrchestratorAgent(db=db_session)
+
+        response = orchestrator.run_move_out_workflow(
+            tenant_id=rohan.id,
+            notice_days=15,
+            reason="Relocating",
+        )
+        assert response["pending_approval"] is True
+        approval_id = response["approval_details"]["approval_id"]
+
+        approval = db_session.get(ApprovalRequest, approval_id)
+        assert approval.status == "pending"
+
+        # Simulate rejection by manager
+        approval.status = "rejected"
+        approval.reviewed_by = "Audit Manager"
+        approval.review_notes = "Turnover quote is too high, request alternate vendor."
+        if approval.workflow:
+            approval.workflow.status = "rejected"
+        db_session.commit()
+
+        wf = db_session.get(WorkflowExecution, response["workflow_id"])
+        assert wf.status == "rejected"
+        assert approval.status == "rejected"

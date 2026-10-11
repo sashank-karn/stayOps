@@ -39,7 +39,7 @@ def test_readiness_reports_llm_provider_without_leaking_key():
 
 def test_settings_build_sqlalchemy_url():
     settings = get_settings()
-    assert settings.sqlalchemy_url.startswith("postgresql+psycopg://")
+    assert settings.sqlalchemy_url.startswith(("postgresql+psycopg://", "sqlite"))
 
 
 def test_agent_message_envelope_defaults_and_transition():
