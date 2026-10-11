@@ -93,6 +93,14 @@ class TestCollectionsAgent:
         assert res_vikram["total_payable"] > 11000.0
         assert len(res_vikram["penalties"]) > 0
 
+    def test_calculate_late_fees_negative_inputs_rejected(self, db_session):
+        from agents.collections.agent import calculate_late_fees
+        vikram = db_session.query(Tenant).filter_by(full_name="Vikram Reddy").first()
+        with pytest.raises(ValueError, match="per_day_penalty must be non-negative"):
+            calculate_late_fees(db_session, vikram.id, per_day_penalty=-50.0, grace_days=5)
+        with pytest.raises(ValueError, match="grace_days must be non-negative"):
+            calculate_late_fees(db_session, vikram.id, per_day_penalty=50.0, grace_days=-1)
+
     def test_forecast_monthly_collections(self, db_session):
         from agents.collections.agent import forecast_monthly_collections
         forecast = forecast_monthly_collections(db_session)
