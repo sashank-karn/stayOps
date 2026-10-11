@@ -61,6 +61,18 @@ class TestTenantSupportAgent:
         assert tenant.status == "notice"
         assert res["expected_move_out_date"] is not None
 
+    def test_record_move_out_notice_without_active_lease_rejected(self, db_session):
+        from backend.app.models.tenant import Lease
+        tenant = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+        # Mark lease as terminated
+        lease = db_session.query(Lease).filter_by(tenant_id=tenant.id, status="active").first()
+        if lease:
+            lease.status = "terminated"
+            db_session.commit()
+
+        with pytest.raises(ValueError, match="does not have an active lease"):
+            record_move_out_notice(db_session, tenant_id=tenant.id, notice_days=15)
+
     def test_handle_move_out_message(self, db_session):
         tenant = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
         agent = TenantSupportAgent(db=db_session)
