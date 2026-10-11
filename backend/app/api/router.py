@@ -280,6 +280,66 @@ def list_vendors(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
     ]
 
 
+class ComplaintSubmissionRequest(BaseModel):
+    tenant_id: Optional[str] = None
+    description: str = Field(..., description="Details of the resident complaint")
+    category: Optional[str] = "General"
+
+
+@router.post("/complaints")
+def submit_complaint_api(
+    payload: ComplaintSubmissionRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Triage and register a resident complaint with priority scoring and SLA tracking."""
+    from agents.tenant_support.agent import TenantSupportAgent
+    agent = TenantSupportAgent(db=db)
+    result = agent.process_complaint({
+        "tenant_id": payload.tenant_id,
+        "description": payload.description,
+        "category": payload.category,
+    })
+    return result
+
+
+class VendorRateRequest(BaseModel):
+    rating: float = Field(..., ge=1.0, le=5.0, description="Contractor rating from 1.0 to 5.0")
+
+
+@router.post("/vendors/{vendor_id}/rate")
+def rate_vendor_api(
+    vendor_id: str,
+    payload: VendorRateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Update contractor performance rating after completed job."""
+    from agents.maintenance.agent import MaintenanceAgent
+    agent = MaintenanceAgent(db=db)
+    try:
+        return agent.rate_vendor({"vendor_id": vendor_id, "rating": payload.rating})
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+
+
+class TurnoverChecklistRequest(BaseModel):
+    checklist: dict[str, bool] = Field(..., description="Checklist item status mappings")
+
+
+@router.post("/maintenance/turnover/{ticket_id}/checklist")
+def verify_turnover_checklist_api(
+    ticket_id: str,
+    payload: TurnoverChecklistRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Verify room turnover inspection checklist and certify room readiness."""
+    from agents.maintenance.agent import MaintenanceAgent
+    agent = MaintenanceAgent(db=db)
+    try:
+        return agent.verify_turnover({"ticket_id": ticket_id, "checklist": payload.checklist})
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+
+
 # -------------------------------------------------------------
 # 6. Approvals (Human-in-the-Loop)
 # -------------------------------------------------------------

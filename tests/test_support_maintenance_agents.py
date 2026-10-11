@@ -75,6 +75,41 @@ class TestTenantSupportAgent:
         assert response.result["tenant_name"] == "Rohan Mehta"
         assert response.result["notice_days"] == 15
 
+    def test_classify_complaint_priority_tiers(self):
+        from agents.tenant_support.agent import classify_complaint_priority
+        p1, sla1, tier1 = classify_complaint_priority("Ceiling leak and flooding in room")
+        assert p1 == "P1-Urgent"
+        assert sla1 == 2
+        assert "Emergency" in tier1
+
+        p2, sla2, tier2 = classify_complaint_priority("Geyser not heating water properly")
+        assert p2 == "P2-High"
+        assert sla2 == 12
+
+        p3, sla3, tier3 = classify_complaint_priority("Need a replacement light bulb")
+        assert p3 == "P3-Routine"
+        assert sla3 == 24
+
+    def test_process_complaint_triage(self, db_session):
+        tenant = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+        agent = TenantSupportAgent(db=db_session)
+
+        msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="tenant_support",
+            task_type="submit_complaint",
+            input_data={
+                "tenant_id": tenant.id,
+                "description": "Short circuit sparking near bedside socket",
+                "category": "Electrical",
+            },
+        )
+        resp = agent.handle_message(msg)
+        assert resp.status == MessageStatus.COMPLETED
+        assert resp.result["priority"] == "P1-Urgent"
+        assert resp.result["requires_immediate_dispatch"] is True
+        assert resp.result["tenant_name"] == "Rohan Mehta"
+
 
 class TestMaintenanceAndVendorAgent:
     def test_find_best_vendor(self, db_session):
@@ -158,3 +193,55 @@ class TestMaintenanceAndVendorAgent:
         assert resp.result["action"] == "room_turnover_scheduled"
         assert resp.result["room_number"] == details["room_number"]
         assert "Cleaning" in resp.result["assigned_vendor"] or "CleanPro" in resp.result["assigned_vendor"]
+
+    def test_update_vendor_rating(self, db_session):
+        from agents.maintenance.agent import update_vendor_rating, find_best_vendor
+        vendor = find_best_vendor(db_session, "Plumbing")
+        assert vendor is not None
+        initial_rating = vendor.rating
+
+        updated = update_vendor_rating(db_session, vendor.id, 5.0)
+        assert updated.rating >= initial_rating
+
+        # Check agent message handling
+        agent = MaintenanceAgent(db=db_session)
+        msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="maintenance",
+            task_type="rate_vendor",
+            input_data={"vendor_id": vendor.id, "rating": 4.8},
+        )
+        resp = agent.handle_message(msg)
+        assert resp.status == MessageStatus.COMPLETED
+        assert resp.result["new_rating"] > 0
+
+    def test_verify_turnover_checklist_full_and_partial(self, db_session):
+        from backend.app.models.maintenance import MaintenanceTicket
+        from agents.maintenance.agent import verify_turnover_checklist
+
+        ticket = db_session.query(MaintenanceTicket).first()
+        assert ticket is not None
+
+        # Partial checklist should fail pass requirement
+        partial_checks = {
+            "keys_returned": True,
+            "fixtures_intact": True,
+            "plumbing_cleared": False,
+            "walls_clean": True,
+            "sanitized": False,
+        }
+        res_partial = verify_turnover_checklist(db_session, ticket.id, partial_checks)
+        assert res_partial["all_passed"] is False
+        assert len(res_partial["pending_items"]) == 2
+
+        # Complete checklist certifies room
+        full_checks = {
+            "keys_returned": True,
+            "fixtures_intact": True,
+            "plumbing_cleared": True,
+            "walls_clean": True,
+            "sanitized": True,
+        }
+        res_full = verify_turnover_checklist(db_session, ticket.id, full_checks)
+        assert res_full["all_passed"] is True
+        assert res_full["status"] == "resolved"

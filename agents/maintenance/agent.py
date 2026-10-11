@@ -68,6 +68,62 @@ def estimate_service_cost(category: str, vendor: Optional[Vendor], scope: str = 
     return round(total, 2)
 
 
+def update_vendor_rating(db: Session, vendor_id: str, new_rating: float) -> Vendor:
+    """Update a contractor's performance rating based on verified service completion."""
+    if not (1.0 <= new_rating <= 5.0):
+        raise ValueError("Rating must be between 1.0 and 5.0.")
+
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor:
+        raise ValueError(f"Vendor '{vendor_id}' not found.")
+
+    # Rolling exponential average: 80% historical, 20% recent job
+    updated_rating = round((vendor.rating * 0.8) + (new_rating * 0.2), 2)
+    vendor.rating = updated_rating
+    db.commit()
+    db.refresh(vendor)
+    return vendor
+
+
+def verify_turnover_checklist(db: Session, ticket_id: str, checklist: dict[str, bool]) -> dict[str, Any]:
+    """Validate turnover room inspection checklist and transition ticket status upon full completion."""
+    ticket = db.get(MaintenanceTicket, ticket_id)
+    if not ticket:
+        raise ValueError(f"Maintenance ticket '{ticket_id}' not found.")
+
+    required_checks = {
+        "keys_returned": "Keys & access cards surrendered",
+        "fixtures_intact": "Light fixtures, switches, and fans verified",
+        "plumbing_cleared": "Taps, geyser, and drainage free of blocks",
+        "walls_clean": "Paint, walls, and cupboards free of major damage",
+        "sanitized": "Deep cleaning and room sanitization completed",
+    }
+
+    missing_or_failed = [
+        label for key, label in required_checks.items()
+        if not checklist.get(key, False)
+    ]
+
+    all_passed = len(missing_or_failed) == 0
+    if all_passed:
+        ticket.status = "resolved"
+        db.commit()
+        db.refresh(ticket)
+
+    return {
+        "ticket_id": ticket.id,
+        "all_passed": all_passed,
+        "status": ticket.status,
+        "completed_items": [k for k, v in checklist.items() if v],
+        "pending_items": missing_or_failed,
+        "message": (
+            "Turnover inspection fully passed. Room is certified ready for next resident."
+            if all_passed else
+            f"Inspection pending {len(missing_or_failed)} checklist items: {', '.join(missing_or_failed)}."
+        ),
+    }
+
+
 class MaintenanceAgent:
     """Specialized Maintenance and Vendor Agent implementation."""
 
@@ -89,6 +145,10 @@ class MaintenanceAgent:
                 result = self.prepare_room_turnover(payload)
             elif task_type == "assign_vendor":
                 result = self.assign_vendor(payload)
+            elif task_type == "rate_vendor":
+                result = self.rate_vendor(payload)
+            elif task_type == "verify_turnover_checklist":
+                result = self.verify_turnover(payload)
             else:
                 return message.mark(
                     MessageStatus.FAILED,
@@ -223,3 +283,28 @@ class MaintenanceAgent:
             "status": "assigned",
             "message": f"Ticket assigned to {vendor.name}.",
         }
+
+    def rate_vendor(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Update vendor rating and return updated vendor status."""
+        vendor_id = payload.get("vendor_id")
+        rating = float(payload.get("rating", 5.0))
+        if not vendor_id:
+            raise ValueError("vendor_id is required to rate a vendor.")
+
+        vendor = update_vendor_rating(self.db, vendor_id, rating)
+        return {
+            "vendor_id": vendor.id,
+            "vendor_name": vendor.name,
+            "category": vendor.category,
+            "new_rating": vendor.rating,
+            "message": f"Contractor {vendor.name} rating updated to {vendor.rating} stars.",
+        }
+
+    def verify_turnover(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Inspect and verify room turnover checklist items."""
+        ticket_id = payload.get("ticket_id")
+        checklist = payload.get("checklist", {})
+        if not ticket_id:
+            raise ValueError("ticket_id is required to verify turnover checklist.")
+
+        return verify_turnover_checklist(self.db, ticket_id, checklist)
