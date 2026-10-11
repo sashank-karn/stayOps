@@ -234,7 +234,10 @@ def reschedule_visit_api(payload: VisitRescheduleRequest, db: Session = Depends(
             "message": "Visit successfully rescheduled.",
         }
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        err = str(ve)
+        if "not found" in err.lower():
+            raise HTTPException(status_code=404, detail=err)
+        raise HTTPException(status_code=400, detail=err)
 
 
 # -------------------------------------------------------------
@@ -537,7 +540,10 @@ def get_tenant_late_fees(
             "per_day_penalty": per_day_penalty,
         })
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        err = str(ve)
+        if "not found" in err.lower():
+            raise HTTPException(status_code=404, detail=err)
+        raise HTTPException(status_code=400, detail=err)
 
 
 @router.get("/vacancy/downtime-loss")
@@ -560,6 +566,13 @@ def get_priority_relist_queue_api(
     from agents.vacancy_revenue.agent import VacancyRevenueAgent
     agent = VacancyRevenueAgent(db=db)
     return agent.get_relist_queue({"limit": limit})
+
+
+@router.get("/health/diagnostics")
+def get_system_diagnostics_api(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Inspect end-to-end multi-agent bus health, subsystem metrics, and resilience status."""
+    orchestrator = OrchestratorAgent(db)
+    return orchestrator.get_system_diagnostics()
 
 
 @router.post("/seed")
