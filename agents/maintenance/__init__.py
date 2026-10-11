@@ -1,7 +1,14 @@
-"""Maintenance & Vendor Agent (Phase 7).
+"""Maintenance and Vendor Agent package — Prabin Yadav (Prabin-yadav)."""
+from agents.maintenance.agent import (
+    AGENT_NAME,
+    MaintenanceAgent,
+    find_best_vendor,
+    estimate_service_cost,
+)
 
-Analyzes maintenance requests, identifies the issue category and priority, selects
-suitable vendors, creates and tracks maintenance jobs, tracks vendor info and costs,
-notifies the tenant of progress, and requests human approval for expensive actions.
-"""
-AGENT_NAME = "maintenance"
+__all__ = [
+    "AGENT_NAME",
+    "MaintenanceAgent",
+    "find_best_vendor",
+    "estimate_service_cost",
+]
