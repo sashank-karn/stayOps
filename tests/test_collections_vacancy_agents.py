@@ -172,3 +172,71 @@ class TestVacancyRevenueAgent:
         assert resp.result["matched_lead_count"] >= 1
         assert resp.result["hand_off_to_leasing"] is True
         assert "Kavya Nair" in resp.result["matched_leads"][0]["name"]
+
+    def test_calculate_vacancy_loss(self, db_session):
+        from agents.vacancy_revenue.agent import calculate_vacancy_loss
+        loss = calculate_vacancy_loss(db_session, downtime_days=30)
+        assert loss["vacant_bed_count"] == 4
+        assert loss["daily_runrate_loss"] > 0
+        assert loss["monthly_vacancy_loss"] > 0
+        assert loss["projected_downtime_loss"] > 0
+        assert loss["annualized_exposure"] > 0
+        assert loss["impact_severity"] in ("High", "Moderate")
+
+    def test_priority_relist_queue(self, db_session):
+        from agents.vacancy_revenue.agent import get_priority_relist_queue
+        queue = get_priority_relist_queue(db_session, limit=5)
+        assert len(queue) > 0
+        # Beds should be sorted by monthly_rent descending
+        for i in range(len(queue) - 1):
+            assert queue[i]["monthly_rent"] >= queue[i + 1]["monthly_rent"]
+        assert queue[0]["priority_rank"] in ("P1-High Value", "P2-Standard")
+
+    def test_vacancy_agent_message_handling(self, db_session):
+        agent = VacancyRevenueAgent(db=db_session)
+
+        # calculate_vacancy_loss task
+        msg_loss = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="vacancy_revenue",
+            task_type="calculate_vacancy_loss",
+            input_data={"downtime_days": 15},
+        )
+        resp_loss = agent.handle_message(msg_loss)
+        assert resp_loss.status == MessageStatus.COMPLETED
+        assert resp_loss.result["projected_loss_period_days"] == 15
+
+        # priority_relist_queue task
+        msg_q = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="vacancy_revenue",
+            task_type="priority_relist_queue",
+            input_data={"limit": 3},
+        )
+        resp_q = agent.handle_message(msg_q)
+        assert resp_q.status == MessageStatus.COMPLETED
+        assert len(resp_q.result) <= 3
+
+    def test_100_percent_full_occupancy_edge_case(self, db_session):
+        from backend.app.models.property import Bed
+        from agents.vacancy_revenue.agent import calculate_portfolio_occupancy, calculate_vacancy_loss, get_priority_relist_queue
+
+        # Temporarily mark all beds as occupied
+        all_beds = db_session.query(Bed).all()
+        for b in all_beds:
+            b.status = "occupied"
+        db_session.commit()
+
+        occ = calculate_portfolio_occupancy(db_session)
+        assert occ["occupancy_rate_percent"] == 100.0
+        assert occ["available_beds"] == 0
+        assert occ["monthly_vacancy_loss"] == 0.0
+
+        loss = calculate_vacancy_loss(db_session, downtime_days=30)
+        assert loss["vacant_bed_count"] == 0
+        assert loss["monthly_vacancy_loss"] == 0.0
+        assert loss["daily_runrate_loss"] == 0.0
+        assert loss["impact_severity"] == "None"
+
+        queue = get_priority_relist_queue(db_session)
+        assert len(queue) == 0
