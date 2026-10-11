@@ -77,6 +77,56 @@ class TestCollectionsAgent:
         assert resp.status == MessageStatus.COMPLETED
         assert resp.result["outstanding_balance"] == 0.0
 
+    def test_calculate_late_fees_grace_period(self, db_session):
+        from agents.collections.agent import calculate_late_fees
+        # Rohan Mehta (0 overdue)
+        rohan = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+        res_rohan = calculate_late_fees(db_session, rohan.id, per_day_penalty=100.0, grace_days=5)
+        assert res_rohan["total_late_fees"] == 0.0
+        assert res_rohan["total_payable"] == 0.0
+
+        # Vikram Reddy (has overdue days >= 6)
+        vikram = db_session.query(Tenant).filter_by(full_name="Vikram Reddy").first()
+        res_vikram = calculate_late_fees(db_session, vikram.id, per_day_penalty=100.0, grace_days=5)
+        assert res_vikram["base_outstanding"] == 11000.0
+        assert res_vikram["total_late_fees"] >= 100.0
+        assert res_vikram["total_payable"] > 11000.0
+        assert len(res_vikram["penalties"]) > 0
+
+    def test_forecast_monthly_collections(self, db_session):
+        from agents.collections.agent import forecast_monthly_collections
+        forecast = forecast_monthly_collections(db_session)
+        assert forecast["active_lease_count"] >= 4
+        assert forecast["contracted_monthly_revenue"] > 40000.0
+        assert forecast["projected_realized_revenue"] > 0.0
+        assert forecast["current_total_collected"] > 0.0
+
+    def test_handle_late_fees_and_forecast_messages(self, db_session):
+        vikram = db_session.query(Tenant).filter_by(full_name="Vikram Reddy").first()
+        agent = CollectionsAgent(db=db_session)
+
+        # assess_late_fees message
+        msg_late = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="collections",
+            task_type="assess_late_fees",
+            input_data={"tenant_id": vikram.id, "grace_days": 5, "per_day_penalty": 150.0},
+        )
+        resp_late = agent.handle_message(msg_late)
+        assert resp_late.status == MessageStatus.COMPLETED
+        assert resp_late.result["total_late_fees"] >= 150.0
+
+        # forecast_collections message
+        msg_fc = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="collections",
+            task_type="forecast_collections",
+            input_data={},
+        )
+        resp_fc = agent.handle_message(msg_fc)
+        assert resp_fc.status == MessageStatus.COMPLETED
+        assert resp_fc.result["contracted_monthly_revenue"] > 0.0
+
 
 class TestVacancyRevenueAgent:
     def test_calculate_portfolio_occupancy(self, db_session):
