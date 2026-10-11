@@ -125,6 +125,11 @@ def calculate_late_fees(
     grace_days: int = 5,
 ) -> dict[str, Any]:
     """Calculate accrued late payment fees based on days overdue exceeding grace period."""
+    if per_day_penalty < 0.0:
+        raise ValueError("per_day_penalty must be non-negative.")
+    if grace_days < 0:
+        raise ValueError("grace_days must be non-negative.")
+
     balance_info = calculate_tenant_balance(db, tenant_id)
     overdue_records = balance_info.get("overdue_records", [])
 
@@ -168,6 +173,17 @@ def forecast_monthly_collections(db: Session, target_month: Optional[str] = None
     """Forecast total projected collections for active portfolio leases."""
     portfolio_metrics = get_portfolio_financial_metrics(db)
     active_leases = db.execute(select(Lease).where(Lease.status == "active")).scalars().all()
+
+    if not active_leases:
+        return {
+            "active_lease_count": 0,
+            "contracted_monthly_revenue": 0.0,
+            "historical_collection_rate_percent": portfolio_metrics["collection_rate_percent"],
+            "projected_realized_revenue": 0.0,
+            "projected_uncollected_gap": 0.0,
+            "current_total_collected": portfolio_metrics["total_collected"],
+            "current_total_outstanding": portfolio_metrics["total_outstanding"],
+        }
 
     contracted_monthly_revenue = sum(l.monthly_rent for l in active_leases)
     historical_rate = (
