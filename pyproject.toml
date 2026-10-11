@@ -1,6 +1,6 @@
 [tool.pytest.ini_options]
 # Run pytest from the repo root; this makes `shared`, `backend`, and `agents` importable.
-pythonpath = ["."]
+pythonpath = [".", "backend"]
 testpaths = ["tests"]
 addopts = "-q"
 
