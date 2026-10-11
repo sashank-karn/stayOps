@@ -28,6 +28,22 @@ app = FastAPI(
 from backend.app.rag.router import router as rag_router
 app.include_router(rag_router)
 
+# Include the StayOps Multi-Agent Operations router
+from backend.app.api.router import router as api_router
+app.include_router(api_router)
+
+@app.on_event("startup")
+def on_startup():
+    """Ensure database tables and sample data are ready on boot."""
+    from backend.app.db.session import engine, Base
+    from backend.app.db.seed import seed_database
+    try:
+        Base.metadata.create_all(bind=engine)
+        seed_database()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Startup DB init note: %s", e)
+
 # CORS so the Next.js dashboard can call the API during development.
 app.add_middleware(
     CORSMiddleware,
