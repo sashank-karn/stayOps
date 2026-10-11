@@ -1,5 +1,6 @@
 """API tests for StayOps Operations & Multi-Agent endpoints."""
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -189,4 +190,33 @@ class TestOperationsAPI:
         data = resp.json()
         assert data["workflow_type"] == "lead_inquiry"
         assert "matched_rooms" in data
+
+    def test_visit_reschedule_api_flow(self, client_with_db):
+        """Test scheduling and subsequently rescheduling a property visit via API."""
+        client, session = client_with_db
+        lead = session.query(Tenant).first()
+        from backend.app.models.lead import Lead, PropertyVisit
+        from backend.app.models.property import Property
+        l = session.query(Lead).first()
+        p = session.query(Property).first()
+        visit = PropertyVisit(
+            lead_id=l.id,
+            property_id=p.id,
+            scheduled_time=datetime.now(timezone.utc),
+            status="scheduled",
+        )
+        session.add(visit)
+        session.commit()
+        session.refresh(visit)
+
+        resched_resp = client.post(
+            "/api/visits/reschedule",
+            json={
+                "visit_id": visit.id,
+                "new_scheduled_time": "2026-10-18T15:00:00Z",
+                "reason": "Rescheduled for weekend visit",
+            },
+        )
+        assert resched_resp.status_code == 200
+        assert resched_resp.json()["status"] == "rescheduled"
 
