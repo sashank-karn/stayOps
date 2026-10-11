@@ -508,6 +508,60 @@ def trigger_lead_inquiry_workflow(
     return orchestrator.run_lead_inquiry_workflow(payload.model_dump())
 
 
+# -------------------------------------------------------------
+# 8. Financial Forecasting & Vacancy Analytics — Adarsh Jha
+# -------------------------------------------------------------
+
+@router.get("/financials/forecast")
+def get_collections_forecast(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Retrieve forward-looking 30-day collection forecasts and contracted revenue realization."""
+    from agents.collections.agent import CollectionsAgent
+    agent = CollectionsAgent(db=db)
+    return agent.forecast_collections()
+
+
+@router.get("/financials/late-fees/{tenant_id}")
+def get_tenant_late_fees(
+    tenant_id: str,
+    grace_days: int = Query(5, ge=0, le=30),
+    per_day_penalty: float = Query(100.0, ge=0.0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Calculate itemized late fee assessment for a tenant."""
+    from agents.collections.agent import CollectionsAgent
+    agent = CollectionsAgent(db=db)
+    try:
+        return agent.assess_late_fees({
+            "tenant_id": tenant_id,
+            "grace_days": grace_days,
+            "per_day_penalty": per_day_penalty,
+        })
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+
+
+@router.get("/vacancy/downtime-loss")
+def get_vacancy_downtime_loss(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Calculate multi-tier portfolio revenue loss and annualized downtime exposure."""
+    from agents.vacancy_revenue.agent import VacancyRevenueAgent
+    agent = VacancyRevenueAgent(db=db)
+    return agent.calculate_vacancy_loss({"downtime_days": days})
+
+
+@router.get("/vacancy/relist-queue")
+def get_priority_relist_queue_api(
+    limit: int = Query(5, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> List[dict[str, Any]]:
+    """Retrieve prioritized vacant beds for immediate marketing and turnover re-listing."""
+    from agents.vacancy_revenue.agent import VacancyRevenueAgent
+    agent = VacancyRevenueAgent(db=db)
+    return agent.get_relist_queue({"limit": limit})
+
+
 @router.post("/seed")
 def run_database_seed(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Seed initial sample data if not already seeded."""

@@ -118,6 +118,76 @@ def get_portfolio_financial_metrics(db: Session) -> dict[str, Any]:
     }
 
 
+def calculate_late_fees(
+    db: Session,
+    tenant_id: str,
+    per_day_penalty: float = 100.0,
+    grace_days: int = 5,
+) -> dict[str, Any]:
+    """Calculate accrued late payment fees based on days overdue exceeding grace period."""
+    balance_info = calculate_tenant_balance(db, tenant_id)
+    overdue_records = balance_info.get("overdue_records", [])
+
+    itemized_penalties = []
+    total_late_fees = 0.0
+
+    for item in overdue_records:
+        days_late = item.get("days_overdue", 0)
+        unpaid = item.get("unpaid_amount", 0.0)
+        if days_late > grace_days and unpaid > 0:
+            chargeable_days = days_late - grace_days
+            penalty = round(chargeable_days * per_day_penalty, 2)
+            total_late_fees += penalty
+            itemized_penalties.append(
+                {
+                    "billing_month": item.get("billing_month"),
+                    "unpaid_amount": unpaid,
+                    "days_overdue": days_late,
+                    "grace_days": grace_days,
+                    "chargeable_days": chargeable_days,
+                    "late_fee": penalty,
+                }
+            )
+
+    total_outstanding_with_fees = round(balance_info["outstanding_balance"] + total_late_fees, 2)
+
+    return {
+        "tenant_id": tenant_id,
+        "tenant_name": balance_info["tenant_name"],
+        "base_outstanding": balance_info["outstanding_balance"],
+        "total_late_fees": total_late_fees,
+        "total_payable": total_outstanding_with_fees,
+        "grace_days_allowed": grace_days,
+        "per_day_rate": per_day_penalty,
+        "penalties": itemized_penalties,
+        "is_waivable": total_late_fees > 0 and balance_info["max_days_overdue"] <= 7,
+    }
+
+
+def forecast_monthly_collections(db: Session, target_month: Optional[str] = None) -> dict[str, Any]:
+    """Forecast total projected collections for active portfolio leases."""
+    portfolio_metrics = get_portfolio_financial_metrics(db)
+    active_leases = db.execute(select(Lease).where(Lease.status == "active")).scalars().all()
+
+    contracted_monthly_revenue = sum(l.monthly_rent for l in active_leases)
+    historical_rate = (
+        portfolio_metrics["collection_rate_percent"] / 100.0
+        if portfolio_metrics["collection_rate_percent"] > 0
+        else 0.95
+    )
+    projected_realization = round(contracted_monthly_revenue * historical_rate, 2)
+
+    return {
+        "active_lease_count": len(active_leases),
+        "contracted_monthly_revenue": round(contracted_monthly_revenue, 2),
+        "historical_collection_rate_percent": portfolio_metrics["collection_rate_percent"],
+        "projected_realized_revenue": projected_realization,
+        "projected_uncollected_gap": round(contracted_monthly_revenue - projected_realization, 2),
+        "current_total_collected": portfolio_metrics["total_collected"],
+        "current_total_outstanding": portfolio_metrics["total_outstanding"],
+    }
+
+
 class CollectionsAgent:
     """Specialized Rent and Collections Agent implementation."""
 
@@ -138,6 +208,10 @@ class CollectionsAgent:
                 result = self.get_portfolio_financials()
             elif task_type == "generate_reminder":
                 result = self.generate_payment_reminder(payload)
+            elif task_type in ("assess_late_fees", "calculate_late_fees"):
+                result = self.assess_late_fees(payload)
+            elif task_type in ("forecast_collections", "collection_forecast"):
+                result = self.forecast_collections(payload)
             else:
                 return message.mark(
                     MessageStatus.FAILED,
@@ -196,3 +270,17 @@ class CollectionsAgent:
             "days_overdue": days,
             "draft_text": draft,
         }
+
+    def assess_late_fees(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Assess late payment fees according to grace days and per-day penalty policies."""
+        tenant_id = payload.get("tenant_id")
+        per_day = float(payload.get("per_day_penalty", 100.0))
+        grace_days = int(payload.get("grace_days", 5))
+        if not tenant_id:
+            raise ValueError("tenant_id is required to assess late fees.")
+        return calculate_late_fees(self.db, tenant_id=tenant_id, per_day_penalty=per_day, grace_days=grace_days)
+
+    def forecast_collections(self, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Project monthly collections and identify revenue gap."""
+        target_month = payload.get("target_month") if payload else None
+        return forecast_monthly_collections(self.db, target_month=target_month)
