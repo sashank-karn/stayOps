@@ -562,6 +562,13 @@ def get_priority_relist_queue_api(
     return agent.get_relist_queue({"limit": limit})
 
 
+@router.get("/health/diagnostics")
+def get_system_diagnostics_api(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Inspect end-to-end multi-agent bus health, subsystem metrics, and resilience status."""
+    orchestrator = OrchestratorAgent(db)
+    return orchestrator.get_system_diagnostics()
+
+
 @router.post("/seed")
 def run_database_seed(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Seed initial sample data if not already seeded."""

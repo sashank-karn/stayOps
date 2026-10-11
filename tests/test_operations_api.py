@@ -220,3 +220,41 @@ class TestOperationsAPI:
         assert resched_resp.status_code == 200
         assert resched_resp.json()["status"] == "rescheduled"
 
+    def test_system_diagnostics_endpoint(self, client_with_db):
+        """Test the system diagnostics endpoint returns status of all 7 agents and system state."""
+        client, _ = client_with_db
+        resp = client.get("/api/health/diagnostics")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "operational"
+        assert data["agent_bus"]["registered_agents_count"] == 7
+        assert "subsystem_resilience" in data
+        assert data["system_state"]["total_inventory_beds"] > 0
+
+    def test_financial_forecast_and_complaints_endpoints(self, client_with_db):
+        """Test financial forecast, late fees, complaints and vacancy API endpoints."""
+        client, session = client_with_db
+
+        # Test financial forecast
+        fc_resp = client.get("/api/financials/forecast")
+        assert fc_resp.status_code == 200
+        assert fc_resp.json()["contracted_monthly_revenue"] > 0
+
+        # Test vacancy downtime loss
+        vc_resp = client.get("/api/vacancy/downtime-loss?days=30")
+        assert vc_resp.status_code == 200
+        assert vc_resp.json()["projected_downtime_loss"] > 0
+
+        # Test relist queue
+        rq_resp = client.get("/api/vacancy/relist-queue?limit=3")
+        assert rq_resp.status_code == 200
+        assert len(rq_resp.json()) <= 3
+
+        # Test complaint registration
+        comp_resp = client.post(
+            "/api/complaints",
+            json={"description": "Emergency: short circuit sparking in corridor", "category": "Electrical"},
+        )
+        assert comp_resp.status_code == 200
+        assert comp_resp.json()["priority"] == "P1-Urgent"
+
