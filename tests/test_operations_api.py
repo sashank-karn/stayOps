@@ -129,3 +129,64 @@ class TestOperationsAPI:
         assert wf_resp.status_code == 200
         wf_detail = wf_resp.json()
         assert len(wf_detail["tasks"]) == 6
+
+    def test_approval_review_flow_and_validation(self, client_with_db):
+        """Test listing pending approvals and submitting review decision."""
+        client, session = client_with_db
+        rohan = session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+
+        # Trigger workflow to create a pending approval
+        client.post(
+            "/api/workflows/move-out",
+            json={"tenant_id": rohan.id, "notice_days": 15},
+        )
+
+        approvals_resp = client.get("/api/approvals")
+        assert approvals_resp.status_code == 200
+        approvals = approvals_resp.json()
+        assert len(approvals) >= 1
+        approval_id = approvals[0]["id"]
+
+        # Test invalid action validation
+        bad_resp = client.post(
+            f"/api/approvals/{approval_id}/review",
+            json={"action": "invalid_choice", "reviewed_by": "Tester"},
+        )
+        assert bad_resp.status_code == 400
+
+        # Test valid approval
+        good_resp = client.post(
+            f"/api/approvals/{approval_id}/review",
+            json={"action": "approved", "reviewed_by": "Ops Manager", "notes": "Approved clean"},
+        )
+        assert good_resp.status_code == 200
+        assert good_resp.json()["status"] == "approved"
+
+    def test_move_out_invalid_tenant_returns_400(self, client_with_db):
+        """Test move-out API returns 400 when tenant does not exist."""
+        client, _ = client_with_db
+        resp = client.post(
+            "/api/workflows/move-out",
+            json={"tenant_id": "nonexistent-tenant-id", "notice_days": 15},
+        )
+        assert resp.status_code == 400
+        assert "not found" in resp.json()["detail"].lower()
+
+    def test_lead_inquiry_workflow_endpoint(self, client_with_db):
+        """Test lead inquiry matching endpoint via API."""
+        client, _ = client_with_db
+        resp = client.post(
+            "/api/workflows/lead-inquiry",
+            json={
+                "full_name": "Divya Sharma",
+                "phone": "+919877700001",
+                "budget": 16000.0,
+                "preferred_room_type": "Single",
+                "preferred_location": "Koramangala",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workflow_type"] == "lead_inquiry"
+        assert "matched_rooms" in data
+

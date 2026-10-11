@@ -138,6 +138,7 @@ class OrchestratorAgent:
         support_res = res_support_msg.result or {}
         time_support_ms = (time.time() - t0) * 1000
 
+        task_status = "failed" if res_support_msg.status == MessageStatus.FAILED else "completed"
         self._record_task(
             workflow_id=wf.id,
             sender=self.name,
@@ -145,10 +146,18 @@ class OrchestratorAgent:
             task_type="submit_move_out_notice",
             input_data=msg_support.input_data,
             output_data=support_res,
+            status=task_status,
             is_parallel=False,
             execution_order=1,
             execution_time_ms=round(time_support_ms, 2),
+            error_message=res_support_msg.error,
         )
+
+        if res_support_msg.status == MessageStatus.FAILED or not support_res:
+            wf.status = "failed"
+            self.db.commit()
+            raise ValueError(res_support_msg.error or "Tenant support agent failed to validate tenant.")
+
         timeline.append(
             {
                 "step": 1,
@@ -454,6 +463,7 @@ class OrchestratorAgent:
 
         return {
             "workflow_id": wf.id,
+            "workflow_type": "lead_inquiry",
             "status": "completed",
             "lead_id": result.get("lead_id"),
             "matched_rooms": result.get("matched_rooms", []),

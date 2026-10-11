@@ -408,6 +408,9 @@ def trigger_move_out_workflow(
             reason=payload.reason,
         )
         return response
+    except ValueError as ve:
+        logger.warning("Move-out validation rejection: %s", ve)
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.exception("Error executing move-out workflow")
         raise HTTPException(status_code=500, detail=str(e))
