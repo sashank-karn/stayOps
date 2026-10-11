@@ -1,195 +1,136 @@
-# StayOps AI
+# StayOps AI: Autonomous PG & Co-Living Multi-Agent System
 
-**A Multi-Agent AI System for Autonomous PG and Co-Living Operations**
+**Team Name:** Synexis  
+**Repository:** [https://github.com/sashank-karn/stayOps](https://github.com/sashank-karn/stayOps)
 
-StayOps AI is a multi-agent system for PG, hostel, and co-living businesses. Specialized AI
-agents collaborate to manage leasing, tenant support, maintenance, rent collection, and
-vacancy recovery. A central **Orchestrator Agent** coordinates these agents while a
-**Facilitator Agent** monitors their execution. The system combines shared memory, business
-data, tool usage, and agent-to-agent communication to automate multi-step property operations
-and proactively reduce revenue loss caused by vacancies and operational inefficiencies.
-
-> This is **not** a property-management dashboard with an AI chatbot bolted on. The core of the
-> system is a collaborating team of specialized agents.
-
----
-
-## RAG Pipeline (Phase 1)
-
-The RAG (Retrieval-Augmented Generation) pipeline enables the system to ingest course
-materials and answer questions grounded in that content:
-
-| Component | Description |
-|-----------|-------------|
-| **Document Ingestion** | PDF, PPTX, DOCX parsing with page/slide metadata |
-| **Text Chunking** | Configurable chunk sizes and overlap |
-| **Embeddings** | OpenAI or Gemini embedding generation |
-| **Vector Store** | Persistent ChromaDB storage with deduplication |
-| **Semantic Retrieval** | Top-k similarity search with score threshold |
-| **Answer Generation** | LLM-grounded answers with source citations |
-| **Safety** | Prompt-injection detection and fallback handling |
-
-### API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/rag/query` | Ask a question about ingested course materials |
-| `POST` | `/rag/ingest/upload` | Upload and ingest PDF/PPTX/DOCX files |
-| `POST` | `/rag/ingest/syllabus` | Ingest the syllabus/ directory contents |
-| `GET` | `/rag/status` | Pipeline and vector store statistics |
+### Team Members & Contributions
+| Member | PRN | GitHub | Primary Ownership |
+|---|---|---|---|
+| **Sashank Karn** | 23070122277 | [`sashank-karn`](https://github.com/sashank-karn) | Central Orchestrator Agent, Facilitator Supervision, Core Models |
+| **Sonali Gupta** | 23070122266 | [`Sona1147`](https://github.com/Sona1147) | Lead & Leasing Agent, Inventory Matching, Frontend Operations UI |
+| **Prabin Yadav** | 23070122280 | [`Prabin-yadav`](https://github.com/Prabin-yadav) | Tenant Support Agent, Maintenance & Vendor Agent, Approval Gating |
+| **Adarsh Jha** | 23070122261 | [`AdarshCodes1221`](https://github.com/AdarshCodes1221) | Rent & Collections Agent, Vacancy & Revenue Recovery Agent |
 
 ---
 
-## The Agents
+## 1. Project Overview & Approved Architecture
 
-| # | Agent | Responsibility |
-|---|-------|----------------|
-| 1 | **Lead & Leasing** | Enquiries, room search & recommendation, lead qualification, visit scheduling, booking |
-| 2 | **Tenant Support** | Tenant communication, FAQs, complaint triage, ticket creation, routing to other agents |
-| 3 | **Maintenance & Vendor** | Issue categorization, priority, vendor selection, job tracking, cost, approvals |
-| 4 | **Rent & Collections** | Due dates, payment status, reminders, follow-ups, escalation, collection summaries |
-| 5 | **Vacancy & Revenue Recovery** | *(flagship)* Detect vacancies, predict upcoming ones, match leads, estimate revenue loss, recommend & trigger action |
-| 6 | **Orchestrator** | Receives requests, selects agents, passes context, coordinates multi-step workflows, escalates to humans |
-| 7 | **Facilitator / Monitoring** | Tracks execution, detects failures/conflicts, requests retries, maintains logs, escalates |
+StayOps AI is a multi-agent AI system specifically architected for PG, hostel, and co-living operations. It eliminates operational fragmentation by employing **seven specialized autonomous agents** collaborating over a shared relational data layer:
 
-See [`docs/architecture.md`](docs/architecture.md) for the full design.
+1. **Lead & Leasing Agent** (`leasing`): Prospective tenant enquiries, requirement extraction, multi-constraint room matching with transparent scoring, lead profiling, visit scheduling, and outreach proposals.
+2. **Tenant Support Agent** (`tenant_support`): Resident communication, intent classification, house rules and facility FAQs, and processing 15-day move-out notices.
+3. **Maintenance & Vendor Agent** (`maintenance`): Automated ticket triage, contractor dispatch from verified directory, repair cost estimation, room turnover preparation, and human approval gating for high expenses (> ₹2,000 INR).
+4. **Rent & Collections Agent** (`collections`): Verified financial ledger tracking, payment status audits, days overdue calculations, security deposit deduction/refund calculation, and tiered reminders.
+5. **Vacancy & Revenue Recovery Agent** (`vacancy_revenue`): Portfolio occupancy metrics, downtime financial risk projections, proactive matching of upcoming room vacancies to active leads.
+6. **Central Orchestrator Agent** (`orchestrator`): Central workflow coordinator managing branching, concurrent/parallel execution (e.g. Vacancy & Rent agents on move-out notice), sequential handoffs, and audit logging.
+7. **Monitoring & Facilitator Agent** (`facilitator`): Supervisory watchdog inspecting agent outputs, validating schemas, detecting contradictions (e.g. negative balances), and bounding retry policies.
 
 ---
 
-## Technology Stack
+## 2. Flagship Demonstration: 15-Day Move-Out Workflow
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js / React (TypeScript) |
-| Backend | FastAPI (Python) |
-| Agent framework | LangGraph |
-| LLM | **Configurable** via `.env` (OpenAI / Gemini / others) |
-| Database | PostgreSQL |
-| Vector search | ChromaDB + pgvector |
-| Messaging | WhatsApp Business API |
-| Auth | JWT |
-| Deployment | Docker + Docker Compose |
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Tenant as Resident (Rohan Mehta)
+    participant TS as Tenant Support Agent
+    participant Orch as Central Orchestrator
+    participant Vac as Vacancy & Revenue Agent
+    participant Rent as Rent & Collections Agent
+    participant Lease as Lead & Leasing Agent
+    participant Maint as Maintenance & Vendor Agent
+    participant Fac as Facilitator Agent
+    actor Manager as Property Manager
 
-The architecture is modular so individual components can be replaced later.
+    Tenant->>TS: Submits 15-day move-out notice
+    TS->>TS: Validates room occupancy & marks status 'notice'
+    TS-->>Orch: Emits MoveOutEvent (Room 101, Checkout Date)
+    
+    par Concurrent Execution (Parallel Step)
+        Orch->>Vac: Task A: Analyze vacancy downtime risk & search pipeline leads
+        Vac->>Vac: Matches Lead 'Kavya Nair' (Score: 85%) & calculates ₹533/day risk
+        Vac-->>Orch: Vacancy Report & Matched Leads
+    and
+        Orch->>Rent: Task B: Audit tenant payment ledger & deposit settlement
+        Rent->>Rent: Verifies zero overdue, calculates ₹32,000 deposit refund
+        Rent-->>Orch: Financial Audit & Settlement Report
+    end
 
----
+    Orch->>Lease: Task C: Handoff matched leads for personalized visit proposals
+    Lease->>Lease: Drafts tailored visit invitation to Kavya Nair
+    Lease-->>Orch: Outreach Proposals Ready
 
-## Repository Layout
+    Orch->>Maint: Task D: Prepare room turnover inspection & deep clean
+    Maint->>Maint: Estimates turnover cost (₹2,350 > ₹2,000 threshold)
+    Maint-->>Orch: Flags requires_approval = True
 
-```
-stayops-ai/
-├── frontend/        # Next.js owner dashboard
-├── backend/         # FastAPI app, APIs, auth
-│   └── app/
-│       └── rag/     # RAG pipeline (Phase 1)
-│           ├── ingestion.py     # PDF/PPTX/DOCX parsers
-│           ├── chunking.py      # Text splitting
-│           ├── embeddings.py    # Embedding generation
-│           ├── vectorstore.py   # ChromaDB persistence
-│           ├── retrieval.py     # Semantic search + answer generation
-│           ├── pipeline.py      # Pipeline orchestrator
-│           └── router.py        # FastAPI endpoints
-├── agents/          # LangGraph multi-agent system
-│   ├── leasing/
-│   ├── tenant_support/
-│   ├── maintenance/
-│   ├── collections/
-│   ├── vacancy_revenue/
-│   ├── orchestrator/
-│   └── facilitator/
-├── database/        # Schema, migrations, seed data
-├── shared/          # Config, LLM client, schemas shared across services
-├── syllabus/        # Course materials for RAG ingestion
-├── tests/           # Unit & integration tests
-├── docs/            # Architecture & documentation
-├── docker/          # Dockerfiles
-├── .env.example
-├── docker-compose.yml
-└── README.md
+    Orch->>Fac: Task E: Supervise workflow integrity & output schemas
+    Fac->>Fac: Verifies zero contradictions, validates all 5 agent contracts
+    Fac-->>Orch: Report: verified_healthy (5 checks passed)
+
+    Orch->>Manager: Presents unified workflow summary & logs to Approval Queue
 ```
 
 ---
 
-## Quick Start
+## 3. Technology Stack
 
-> Full prerequisite install instructions (Windows) are in [`docs/setup.md`](docs/setup.md).
+- **Backend:** FastAPI, Python 3.13, Pydantic v2, SQLAlchemy 2.0 (PostgreSQL / SQLite fallback).
+- **Multi-Agent Engine:** Autonomous AgentMessage contract architecture with parallel execution dispatch.
+- **LLM & Embeddings:** Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`), `models/gemini-embedding-001`, ChromaDB vector store.
+- **Frontend:** Next.js 14, React 18, TypeScript, Responsive Dark Mode Dashboard.
+- **Testing:** Pytest, pytest-asyncio, Starlette TestClient (90 unit and integration tests passing).
 
+---
+
+## 4. Setup & Running Instructions
+
+### 1. Backend Environment Setup
 ```bash
-# 1. Clone
-git clone https://github.com/sashank-karn/stayOps.git && cd stayOps
+# Activate virtual environment
+.venv\Scripts\activate
 
-# 2. Environment
-cp .env.example .env        # then fill in API keys
+# Install dependencies (if not already installed)
+pip install -e .
 
-# 3. Backend (run from the repo root so the `shared` package resolves)
-python -m venv .venv
-# Windows:  .venv\Scripts\activate   |  macOS/Linux: source .venv/bin/activate
-pip install -r backend/requirements.txt
-uvicorn backend.app.main:app --reload   # http://localhost:8000/health
+# Run FastAPI backend
+uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+```
+Interactive API Documentation is available at: `http://localhost:8000/docs`
 
-# 4. Frontend (new terminal)
+### 2. Frontend Dashboard Setup
+```bash
 cd frontend
 npm install
-npm run dev                          # http://localhost:3000
+npm run dev
 ```
+Open `http://localhost:3000` to interact with the StayOps Property Manager Dashboard.
 
-Or, once Docker is installed:
-
+### 3. Running Automated Tests
 ```bash
-docker compose up --build
-```
-
-### Using the RAG Pipeline
-
-```bash
-# Ingest syllabus materials
-curl -X POST http://localhost:8000/rag/ingest/syllabus
-
-# Ask a question
-curl -X POST http://localhost:8000/rag/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What topics are covered in the Agentic AI course?"}'
-
-# Check pipeline status
-curl http://localhost:8000/rag/status
-```
-
-### Running Tests
-
-```bash
-# From the repo root with venv activated
-pytest                    # All tests
-pytest tests/test_ingestion.py   # Ingestion tests only
-pytest tests/test_chunking.py    # Chunking tests only
-pytest tests/test_retrieval.py   # Retrieval tests only
-pytest tests/test_rag_api.py     # API integration tests
-pytest tests/test_smoke.py       # Original Phase 1 smoke tests
+# Run complete test suite (90 tests across all 7 agents and workflows)
+pytest -v
 ```
 
 ---
 
-## Team & Branches
+## 5. API Reference
 
-| Member | GitHub | Area | Branch |
-|--------|--------|------|--------|
-| Sashank Karn | [`sashank-karn`](https://github.com/sashank-karn) | Document ingestion & parsing | `feature/ingestion` |
-| Sonali | [`Sona1147`](https://github.com/Sona1147) | Chunking, embeddings & vector store | `feature/embeddings-vectorstore` |
-| Adarsh | [`AdarshCodes1221`](https://github.com/AdarshCodes1221) | Retrieval, generation & citations | `feature/retrieval-generation` |
-| Prabin | [`Prabin-yadav`](https://github.com/Prabin-yadav) | API integration, interface & QA | `feature/api-integration` |
-
-Contribution rules and the Git workflow are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
----
-
-## Project Status
-
-**Phase 1 — Repository + project structure + RAG pipeline.** ✅ Implementation complete.
-
-See [`docs/roadmap.md`](docs/roadmap.md) for all 17 phases.
-
-### Known Limitations
-
-- Course materials must be provided as PDF, PPTX, or DOCX files
-- Scanned/image-only pages are detected but cannot extract text (OCR not implemented)
-- The LLM API key (OpenAI or Gemini) must be configured for query answering
-- ChromaDB is used for local vector storage; production should consider pgvector
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/dashboard/metrics` | Unified occupancy %, monthly collected, overdue balance, open tickets |
+| `GET` | `/api/properties` | List managed PG properties, address, capacity, and rules |
+| `GET` | `/api/rooms` | List rooms with bed-level status and rental rates |
+| `GET` | `/api/tenants` | Resident directory with active leases and move-out status |
+| `GET` | `/api/leads` | Prospective tenant leads pipeline |
+| `POST` | `/api/leads` | Create new prospective lead enquiry |
+| `GET` | `/api/tickets` | Maintenance tickets with trade vendor assignments |
+| `GET` | `/api/vendors` | Registered contractor directory with ratings and trade hourly rates |
+| `GET` | `/api/approvals` | Human-in-the-loop pending approval requests |
+| `POST` | `/api/approvals/{id}/review` | Approve or reject sensitive / high-cost agent tasks |
+| `GET` | `/api/workflows` | Audit log of all multi-agent workflow executions |
+| `GET` | `/api/workflows/{id}` | Detailed task breakdown and timing for a specific workflow run |
+| `POST` | `/api/workflows/move-out` | Trigger the 15-day move-out multi-agent workflow |
+| `POST` | `/api/workflows/lead-inquiry` | Trigger lead qualification & room matching via Leasing Agent |
+| `POST` | `/rag/query` | RAG semantic search over PG policies, syllabus, and house rules |
+| `GET` | `/health` | Service liveness health probe |
