@@ -193,3 +193,55 @@ class TestMaintenanceAndVendorAgent:
         assert resp.result["action"] == "room_turnover_scheduled"
         assert resp.result["room_number"] == details["room_number"]
         assert "Cleaning" in resp.result["assigned_vendor"] or "CleanPro" in resp.result["assigned_vendor"]
+
+    def test_update_vendor_rating(self, db_session):
+        from agents.maintenance.agent import update_vendor_rating, find_best_vendor
+        vendor = find_best_vendor(db_session, "Plumbing")
+        assert vendor is not None
+        initial_rating = vendor.rating
+
+        updated = update_vendor_rating(db_session, vendor.id, 5.0)
+        assert updated.rating >= initial_rating
+
+        # Check agent message handling
+        agent = MaintenanceAgent(db=db_session)
+        msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="maintenance",
+            task_type="rate_vendor",
+            input_data={"vendor_id": vendor.id, "rating": 4.8},
+        )
+        resp = agent.handle_message(msg)
+        assert resp.status == MessageStatus.COMPLETED
+        assert resp.result["new_rating"] > 0
+
+    def test_verify_turnover_checklist_full_and_partial(self, db_session):
+        from backend.app.models.maintenance import MaintenanceTicket
+        from agents.maintenance.agent import verify_turnover_checklist
+
+        ticket = db_session.query(MaintenanceTicket).first()
+        assert ticket is not None
+
+        # Partial checklist should fail pass requirement
+        partial_checks = {
+            "keys_returned": True,
+            "fixtures_intact": True,
+            "plumbing_cleared": False,
+            "walls_clean": True,
+            "sanitized": False,
+        }
+        res_partial = verify_turnover_checklist(db_session, ticket.id, partial_checks)
+        assert res_partial["all_passed"] is False
+        assert len(res_partial["pending_items"]) == 2
+
+        # Complete checklist certifies room
+        full_checks = {
+            "keys_returned": True,
+            "fixtures_intact": True,
+            "plumbing_cleared": True,
+            "walls_clean": True,
+            "sanitized": True,
+        }
+        res_full = verify_turnover_checklist(db_session, ticket.id, full_checks)
+        assert res_full["all_passed"] is True
+        assert res_full["status"] == "resolved"
