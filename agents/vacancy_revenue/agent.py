@@ -53,6 +53,65 @@ def calculate_portfolio_occupancy(db: Session) -> dict[str, Any]:
     }
 
 
+def calculate_vacancy_loss(db: Session, downtime_days: int = 30) -> dict[str, Any]:
+    """Calculate multi-tier financial vacancy loss across all vacant portfolio inventory."""
+    beds = db.execute(select(Bed).where(Bed.is_deleted == False)).scalars().all()
+    vacant_beds = [b for b in beds if b.status in ("available", "maintenance")]
+
+    total_vacant_beds = len(vacant_beds)
+    total_monthly_loss = sum(b.monthly_rent for b in vacant_beds)
+    daily_runrate_loss = round(total_monthly_loss / 30.0, 2)
+    projected_loss = round(daily_runrate_loss * downtime_days, 2)
+    annualized_exposure = round(total_monthly_loss * 12.0, 2)
+
+    return {
+        "vacant_bed_count": total_vacant_beds,
+        "daily_runrate_loss": daily_runrate_loss,
+        "monthly_vacancy_loss": round(total_monthly_loss, 2),
+        "projected_loss_period_days": downtime_days,
+        "projected_downtime_loss": projected_loss,
+        "annualized_exposure": annualized_exposure,
+        "impact_severity": "High" if total_monthly_loss > 20000 else "Moderate" if total_monthly_loss > 0 else "None",
+    }
+
+
+def get_priority_relist_queue(db: Session, limit: int = 5) -> List[dict[str, Any]]:
+    """Prioritize vacant and turnover beds for aggressive marketing based on revenue risk."""
+    stmt = (
+        select(Bed, Room, Property)
+        .join(Room, Bed.room_id == Room.id)
+        .join(Property, Room.property_id == Property.id)
+        .where(
+            and_(
+                Bed.is_deleted == False,
+                Bed.status.in_(["available", "maintenance"]),
+            )
+        )
+        .order_by(Bed.monthly_rent.desc())
+    )
+    records = db.execute(stmt).all()
+
+    queue = []
+    for bed, room, prop in records:
+        daily_loss = round(bed.monthly_rent / 30.0, 2)
+        queue.append(
+            {
+                "bed_id": bed.id,
+                "bed_label": bed.bed_label,
+                "room_number": room.room_number,
+                "room_type": room.room_type,
+                "property_name": prop.name,
+                "city": prop.city,
+                "monthly_rent": bed.monthly_rent,
+                "daily_revenue_risk": daily_loss,
+                "status": bed.status,
+                "priority_rank": "P1-High Value" if bed.monthly_rent >= 15000 else "P2-Standard",
+            }
+        )
+
+    return queue[:limit]
+
+
 def find_matching_leads_for_room(
     db: Session,
     location: str,
@@ -136,6 +195,10 @@ class VacancyRevenueAgent:
                 result = self.handle_upcoming_vacancy(payload)
             elif task_type == "occupancy_metrics":
                 result = self.get_occupancy_metrics()
+            elif task_type in ("calculate_vacancy_loss", "vacancy_loss"):
+                result = self.calculate_vacancy_loss(payload)
+            elif task_type in ("priority_relist_queue", "relist_queue"):
+                result = self.get_relist_queue(payload)
             else:
                 return message.mark(
                     MessageStatus.FAILED,
@@ -206,3 +269,13 @@ class VacancyRevenueAgent:
     def get_occupancy_metrics(self) -> dict[str, Any]:
         """Return portfolio-wide occupancy rates and potential vs actual revenues."""
         return calculate_portfolio_occupancy(self.db)
+
+    def calculate_vacancy_loss(self, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Compute projected loss across current portfolio vacancy."""
+        days = int(payload.get("downtime_days", 30)) if payload else 30
+        return calculate_vacancy_loss(self.db, downtime_days=days)
+
+    def get_relist_queue(self, payload: Optional[dict[str, Any]] = None) -> List[dict[str, Any]]:
+        """Retrieve prioritized beds for marketing and re-leasing."""
+        limit = int(payload.get("limit", 5)) if payload else 5
+        return get_priority_relist_queue(self.db, limit=limit)
