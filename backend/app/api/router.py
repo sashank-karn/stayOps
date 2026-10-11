@@ -215,6 +215,28 @@ def create_lead(payload: LeadCreate, db: Session = Depends(get_db)) -> dict[str,
     return {"id": lead.id, "status": "created", "full_name": lead.full_name}
 
 
+class VisitRescheduleRequest(BaseModel):
+    visit_id: str
+    new_scheduled_time: datetime
+    reason: Optional[str] = "Lead requested change"
+
+
+@router.post("/visits/reschedule")
+def reschedule_visit_api(payload: VisitRescheduleRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Reschedule an existing property visit via Leasing Agent."""
+    from agents.leasing.agent import reschedule_property_visit
+    try:
+        visit = reschedule_property_visit(db, payload.visit_id, payload.new_scheduled_time, payload.reason)
+        return {
+            "visit_id": visit.id,
+            "scheduled_time": visit.scheduled_time.isoformat(),
+            "status": "rescheduled",
+            "message": "Visit successfully rescheduled.",
+        }
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+
+
 # -------------------------------------------------------------
 # 5. Maintenance & Vendors
 # -------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Unit tests for Lead & Leasing Agent — Sonali Gupta (Sona1147)."""
 import pytest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -179,3 +179,44 @@ class TestLeasingAgentMessageHandling:
         response = agent.handle_message(msg)
         assert response.status == MessageStatus.FAILED
         assert "Unsupported task_type" in response.error
+
+    def test_reschedule_visit_flow(self, db_session):
+        agent = LeasingAgent(db=db_session)
+        lead = create_or_update_lead(
+            db=db_session,
+            full_name="Meera Sen",
+            phone="+919877799988",
+            preferred_location="Bengaluru",
+        )
+        matches = match_rooms_for_lead(db=db_session, budget=12000.0, location="Bengaluru")
+        visit_msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="leasing",
+            task_type="schedule_visit",
+            input_data={"lead_id": lead.id, "property_id": matches[0]["property_id"]},
+        )
+        res_visit = agent.handle_message(visit_msg)
+        visit_id = res_visit.result["visit_id"]
+
+        new_time = (datetime.now(timezone.utc) + timedelta(days=3)).replace(hour=14, minute=0, second=0, microsecond=0)
+        resched_msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="leasing",
+            task_type="reschedule_visit",
+            input_data={"visit_id": visit_id, "new_scheduled_time": new_time.isoformat(), "reason": "Conflict with exams"},
+        )
+        res_resched = agent.handle_message(resched_msg)
+        assert res_resched.status == MessageStatus.COMPLETED
+        assert res_resched.result["status"] == "rescheduled"
+
+    def test_reschedule_nonexistent_visit_fails(self, db_session):
+        agent = LeasingAgent(db=db_session)
+        resched_msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="leasing",
+            task_type="reschedule_visit",
+            input_data={"visit_id": "nonexistent-v-id", "new_scheduled_time": "2026-10-15T10:00:00Z"},
+        )
+        res_resched = agent.handle_message(resched_msg)
+        assert res_resched.status == MessageStatus.FAILED
+        assert "not found" in res_resched.error.lower()
