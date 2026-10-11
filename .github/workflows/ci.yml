@@ -53,6 +53,11 @@ jobs:
         run: |
           npm install
 
+      - name: Run explicit TypeScript type check
+        working-directory: frontend
+        run: |
+          npm run type-check
+
       - name: Run Next.js production build
         working-directory: frontend
         run: |
