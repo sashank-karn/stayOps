@@ -1,8 +1,16 @@
-"""Lead & Leasing Agent (Phase 5).
+"""Lead & Leasing Agent package — Sonali Gupta (Sona1147)."""
+from agents.leasing.agent import (
+    AGENT_NAME,
+    LeasingAgent,
+    match_rooms_for_lead,
+    create_or_update_lead,
+    schedule_property_visit,
+)
 
-Handles potential-tenant enquiries end to end: understands location/budget/room-type/
-move-in date, searches available rooms, recommends suitable ones, answers property
-questions, qualifies leads, schedules visits, follows up, creates/updates lead records,
-and starts booking workflows.
-"""
-AGENT_NAME = "leasing"
+__all__ = [
+    "AGENT_NAME",
+    "LeasingAgent",
+    "match_rooms_for_lead",
+    "create_or_update_lead",
+    "schedule_property_visit",
+]
