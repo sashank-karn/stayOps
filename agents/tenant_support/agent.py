@@ -39,6 +39,32 @@ def classify_tenant_intent(text: str) -> str:
     return "general_support"
 
 
+def classify_complaint_priority(text: str) -> tuple[str, int, str]:
+    """Classify tenant complaint into priority tier, SLA hours, and escalation category.
+
+    Returns:
+        (priority, sla_hours, escalation_tier)
+        - P1-Urgent: Water leakage, short circuit, fire, gas leak, lockout, blackout (SLA: 2 hours).
+        - P2-High: Geyser, AC failure, persistent drainage, WiFi outage (SLA: 12 hours).
+        - P3-Routine: Minor wear, light bulb, fan squeak, standard cleaning (SLA: 24 hours).
+    """
+    t = text.lower()
+    urgent_keywords = [
+        "emergency", "flood", "sparking", "short circuit", "fire", "gas leak",
+        "lockout", "locked out", "no water", "blackout", "overflow", "ceiling leak"
+    ]
+    high_keywords = [
+        "geyser", "ac", "air conditioner", "water heater", "drainage", "stuck",
+        "wifi down", "internet down", "refrigerator", "fridge"
+    ]
+
+    if any(k in t for k in urgent_keywords):
+        return ("P1-Urgent", 2, "Tier-1 Emergency Escalation")
+    elif any(k in t for k in high_keywords):
+        return ("P2-High", 12, "Tier-2 Operational Escalation")
+    return ("P3-Routine", 24, "Tier-3 Standard Queue")
+
+
 def get_active_tenant_details(db: Session, tenant_id_or_phone: str) -> Optional[dict[str, Any]]:
     """Retrieve full resident and lease details using ID or phone number."""
     identifier = tenant_id_or_phone.strip()
@@ -151,6 +177,8 @@ class TenantSupportAgent:
                 result = self.process_move_out_notice(payload)
             elif task_type in ("process_inquiry", "answer_question"):
                 result = self.process_inquiry(payload)
+            elif task_type in ("submit_complaint", "triage_complaint"):
+                result = self.process_complaint(payload)
             elif task_type == "get_tenant_info":
                 result = self.get_tenant_info(payload)
             else:
@@ -228,3 +256,27 @@ class TenantSupportAgent:
         if not info:
             raise ValueError(f"No active tenant found matching '{identifier}'.")
         return info
+
+    def process_complaint(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Triage, score priority, and record tenant complaint with SLA tracking."""
+        tenant_id = payload.get("tenant_id")
+        description = payload.get("description") or payload.get("query") or payload.get("message", "")
+        category = payload.get("category", "General")
+
+        priority, sla_hours, tier = classify_complaint_priority(description)
+        details = get_active_tenant_details(self.db, tenant_id) if tenant_id else None
+
+        return {
+            "tenant_id": tenant_id,
+            "tenant_name": details.get("full_name") if details else "Unknown Resident",
+            "property_name": details.get("property_name") if details else "Unknown Property",
+            "room_number": details.get("room_number") if details else "N/A",
+            "description": description,
+            "category": category,
+            "priority": priority,
+            "sla_hours": sla_hours,
+            "escalation_tier": tier,
+            "requires_immediate_dispatch": priority == "P1-Urgent",
+            "status": "triaged",
+            "message": f"Complaint registered as [{priority}] under {tier}. Resolution SLA target: {sla_hours} hours.",
+        }
