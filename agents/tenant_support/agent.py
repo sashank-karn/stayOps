@@ -48,6 +48,7 @@ def classify_complaint_priority(text: str) -> tuple[str, int, str]:
         - P2-High: Geyser, AC failure, persistent drainage, WiFi outage (SLA: 12 hours).
         - P3-Routine: Minor wear, light bulb, fan squeak, standard cleaning (SLA: 24 hours).
     """
+    import re
     t = text.lower()
     urgent_keywords = [
         "emergency", "flood", "sparking", "short circuit", "fire", "gas leak",
@@ -58,10 +59,14 @@ def classify_complaint_priority(text: str) -> tuple[str, int, str]:
         "wifi down", "internet down", "refrigerator", "fridge"
     ]
 
-    if any(k in t for k in urgent_keywords):
-        return ("P1-Urgent", 2, "Tier-1 Emergency Escalation")
-    elif any(k in t for k in high_keywords):
-        return ("P2-High", 12, "Tier-2 Operational Escalation")
+    for k in urgent_keywords:
+        if re.search(r"\b" + re.escape(k) + r"\b", t):
+            return ("P1-Urgent", 2, "Tier-1 Emergency Escalation")
+
+    for k in high_keywords:
+        if re.search(r"\b" + re.escape(k) + r"\b", t):
+            return ("P2-High", 12, "Tier-2 Operational Escalation")
+
     return ("P3-Routine", 24, "Tier-3 Standard Queue")
 
 

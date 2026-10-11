@@ -75,6 +75,41 @@ class TestTenantSupportAgent:
         assert response.result["tenant_name"] == "Rohan Mehta"
         assert response.result["notice_days"] == 15
 
+    def test_classify_complaint_priority_tiers(self):
+        from agents.tenant_support.agent import classify_complaint_priority
+        p1, sla1, tier1 = classify_complaint_priority("Ceiling leak and flooding in room")
+        assert p1 == "P1-Urgent"
+        assert sla1 == 2
+        assert "Emergency" in tier1
+
+        p2, sla2, tier2 = classify_complaint_priority("Geyser not heating water properly")
+        assert p2 == "P2-High"
+        assert sla2 == 12
+
+        p3, sla3, tier3 = classify_complaint_priority("Need a replacement light bulb")
+        assert p3 == "P3-Routine"
+        assert sla3 == 24
+
+    def test_process_complaint_triage(self, db_session):
+        tenant = db_session.query(Tenant).filter_by(full_name="Rohan Mehta").first()
+        agent = TenantSupportAgent(db=db_session)
+
+        msg = AgentMessage(
+            sender_agent="orchestrator",
+            receiver_agent="tenant_support",
+            task_type="submit_complaint",
+            input_data={
+                "tenant_id": tenant.id,
+                "description": "Short circuit sparking near bedside socket",
+                "category": "Electrical",
+            },
+        )
+        resp = agent.handle_message(msg)
+        assert resp.status == MessageStatus.COMPLETED
+        assert resp.result["priority"] == "P1-Urgent"
+        assert resp.result["requires_immediate_dispatch"] is True
+        assert resp.result["tenant_name"] == "Rohan Mehta"
+
 
 class TestMaintenanceAndVendorAgent:
     def test_find_best_vendor(self, db_session):
