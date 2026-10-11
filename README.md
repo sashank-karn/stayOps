@@ -79,7 +79,8 @@ sequenceDiagram
 - **Multi-Agent Engine:** Autonomous AgentMessage contract architecture with parallel execution dispatch.
 - **LLM & Embeddings:** Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`), `models/gemini-embedding-001`, ChromaDB vector store.
 - **Frontend:** Next.js 14, React 18, TypeScript, Responsive Dark Mode Dashboard.
-- **Testing:** Pytest, pytest-asyncio, Starlette TestClient (90 unit and integration tests passing).
+- **Testing:** Pytest, pytest-asyncio, Starlette TestClient (95 automated unit, agent, workflow, and API tests passing).
+- **CI/CD:** GitHub Actions automated CI matrix running backend Pytest suite, Next.js build, and explicit TypeScript type checks.
 
 ---
 
@@ -90,8 +91,8 @@ sequenceDiagram
 # Activate virtual environment
 .venv\Scripts\activate
 
-# Install dependencies (if not already installed)
-pip install -e .
+# Install dependencies from pinned requirements
+pip install -r requirements.txt
 
 # Run FastAPI backend
 uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
@@ -102,13 +103,18 @@ Interactive API Documentation is available at: `http://localhost:8000/docs`
 ```bash
 cd frontend
 npm install
+
+# Run explicit TypeScript validation
+npm run type-check
+
+# Launch Next.js dev server (Next.js 14.2.35)
 npm run dev
 ```
 Open `http://localhost:3000` to interact with the StayOps Property Manager Dashboard.
 
 ### 3. Running Automated Tests
 ```bash
-# Run complete test suite (90 tests across all 7 agents and workflows)
+# Run complete test suite (95 tests across all 7 agents, API endpoints, and workflows)
 pytest -v
 ```
 
