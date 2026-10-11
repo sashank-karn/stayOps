@@ -127,14 +127,15 @@ def record_move_out_notice(
     if expected_move_out_date is None:
         expected_move_out_date = today + timedelta(days=notice_days)
 
-    # Transition tenant status to 'notice'
-    tenant.status = "notice"
-
-    # Find active lease and set anticipated end date
+    # Find active lease and ensure resident holds an active tenancy
     lease_stmt = select(Lease).where(and_(Lease.tenant_id == tenant.id, Lease.status == "active"))
     lease = db.execute(lease_stmt).scalar_one_or_none()
-    if lease:
-        lease.end_date = expected_move_out_date
+    if not lease:
+        raise ValueError(f"Tenant '{tenant.full_name}' does not have an active lease.")
+
+    # Transition tenant status to 'notice'
+    tenant.status = "notice"
+    lease.end_date = expected_move_out_date
 
     db.commit()
 
