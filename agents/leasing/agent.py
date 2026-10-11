@@ -195,6 +195,41 @@ def schedule_property_visit(
     return visit
 
 
+def reschedule_property_visit(
+    db: Session,
+    visit_id: str,
+    new_scheduled_time: datetime,
+    reason: Optional[str] = None,
+) -> PropertyVisit:
+    """Reschedule an existing prospective property visit."""
+    visit = db.get(PropertyVisit, visit_id)
+    if not visit:
+        raise ValueError(f"Property visit with ID '{visit_id}' not found.")
+    visit.scheduled_time = new_scheduled_time
+    if reason:
+        visit.feedback = f"Rescheduled: {reason}"
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
+def record_visit_feedback(
+    db: Session,
+    visit_id: str,
+    feedback: str,
+    status: str = "completed",
+) -> PropertyVisit:
+    """Record feedback and outcomes from a completed property visit."""
+    visit = db.get(PropertyVisit, visit_id)
+    if not visit:
+        raise ValueError(f"Property visit with ID '{visit_id}' not found.")
+    visit.feedback = feedback
+    visit.status = status
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
 class LeasingAgent:
     """Specialized Lead and Leasing Agent implementation."""
 
@@ -213,6 +248,8 @@ class LeasingAgent:
                 result = self.process_enquiry(payload)
             elif task_type == "schedule_visit":
                 result = self.handle_schedule_visit(payload)
+            elif task_type == "reschedule_visit":
+                result = self.handle_reschedule_visit(payload)
             elif task_type == "match_vacancy_leads":
                 result = self.match_leads_for_vacancy(payload)
             else:
@@ -325,6 +362,22 @@ class LeasingAgent:
             "scheduled_time": visit.scheduled_time.isoformat(),
             "status": visit.status,
             "confirmation_message": f"Property visit scheduled for {scheduled_time.strftime('%b %d, %Y at %I:%M %p')}.",
+        }
+
+    def handle_reschedule_visit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Reschedule an existing property visit."""
+        visit_id = payload.get("visit_id")
+        time_str = payload.get("new_scheduled_time")
+        reason = payload.get("reason")
+        if not visit_id or not time_str:
+            raise ValueError("Both visit_id and new_scheduled_time are required to reschedule.")
+        new_time = datetime.fromisoformat(str(time_str))
+        visit = reschedule_property_visit(self.db, visit_id, new_time, reason)
+        return {
+            "visit_id": visit.id,
+            "scheduled_time": visit.scheduled_time.isoformat(),
+            "status": "rescheduled",
+            "message": f"Visit successfully rescheduled to {visit.scheduled_time.isoformat()}.",
         }
 
     def match_leads_for_vacancy(self, payload: dict[str, Any]) -> dict[str, Any]:
