@@ -176,19 +176,29 @@ def schedule_property_visit(
     feedback: Optional[str] = None,
 ) -> PropertyVisit:
     """Schedule a visit for a lead and update lead status."""
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise ValueError(f"Lead with ID '{lead_id}' not found.")
+
+    prop = db.get(Property, property_id)
+    if not prop:
+        raise ValueError(f"Property with ID '{property_id}' not found.")
+
+    now_utc = datetime.now(timezone.utc)
+    time_utc = scheduled_time if scheduled_time.tzinfo else scheduled_time.replace(tzinfo=timezone.utc)
+    if time_utc < (now_utc - timedelta(minutes=2)):
+        raise ValueError("Scheduled visit time must be in the future.")
+
     visit = PropertyVisit(
         lead_id=lead_id,
         property_id=property_id,
         room_id=room_id,
-        scheduled_time=scheduled_time,
+        scheduled_time=time_utc,
         status="scheduled",
         feedback=feedback,
     )
     db.add(visit)
-
-    lead = db.get(Lead, lead_id)
-    if lead:
-        lead.status = "visit_scheduled"
+    lead.status = "visit_scheduled"
 
     db.commit()
     db.refresh(visit)
@@ -205,7 +215,17 @@ def reschedule_property_visit(
     visit = db.get(PropertyVisit, visit_id)
     if not visit:
         raise ValueError(f"Property visit with ID '{visit_id}' not found.")
-    visit.scheduled_time = new_scheduled_time
+
+    if visit.status == "completed":
+        raise ValueError("Cannot reschedule a property visit that has already been completed.")
+
+    now_utc = datetime.now(timezone.utc)
+    new_time_utc = new_scheduled_time if new_scheduled_time.tzinfo else new_scheduled_time.replace(tzinfo=timezone.utc)
+    if new_time_utc < (now_utc - timedelta(minutes=2)):
+        raise ValueError("New scheduled time must be in the future.")
+
+    visit.scheduled_time = new_time_utc
+    visit.status = "rescheduled"
     if reason:
         visit.feedback = f"Rescheduled: {reason}"
     db.commit()

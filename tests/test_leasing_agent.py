@@ -220,3 +220,28 @@ class TestLeasingAgentMessageHandling:
         res_resched = agent.handle_message(resched_msg)
         assert res_resched.status == MessageStatus.FAILED
         assert "not found" in res_resched.error.lower()
+
+    def test_schedule_visit_past_date_rejected(self, db_session):
+        from agents.leasing.agent import schedule_property_visit
+        from backend.app.models.lead import Lead
+        from backend.app.models.property import Property
+        lead = db_session.query(Lead).first()
+        prop = db_session.query(Property).first()
+        past_time = datetime.now(timezone.utc) - timedelta(days=2)
+        with pytest.raises(ValueError, match="must be in the future"):
+            schedule_property_visit(db_session, lead.id, prop.id, past_time)
+
+    def test_reschedule_completed_visit_rejected(self, db_session):
+        from agents.leasing.agent import schedule_property_visit, reschedule_property_visit
+        from backend.app.models.lead import Lead
+        from backend.app.models.property import Property
+        lead = db_session.query(Lead).first()
+        prop = db_session.query(Property).first()
+        future_time = datetime.now(timezone.utc) + timedelta(days=2)
+        visit = schedule_property_visit(db_session, lead.id, prop.id, future_time)
+        visit.status = "completed"
+        db_session.commit()
+
+        new_future_time = datetime.now(timezone.utc) + timedelta(days=3)
+        with pytest.raises(ValueError, match="already been completed"):
+            reschedule_property_visit(db_session, visit.id, new_future_time)
