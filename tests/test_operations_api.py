@@ -220,6 +220,28 @@ class TestOperationsAPI:
         assert resched_resp.status_code == 200
         assert resched_resp.json()["status"] == "rescheduled"
 
+        # Test past date returns 400 Bad Request
+        past_resp = client.post(
+            "/api/visits/reschedule",
+            json={
+                "visit_id": visit.id,
+                "new_scheduled_time": "2020-01-01T10:00:00Z",
+                "reason": "Invalid past time",
+            },
+        )
+        assert past_resp.status_code == 400
+        assert "future" in past_resp.json()["detail"].lower()
+
+        # Test nonexistent visit returns 404 Not Found
+        missing_resp = client.post(
+            "/api/visits/reschedule",
+            json={
+                "visit_id": "nonexistent-visit-id",
+                "new_scheduled_time": "2026-10-18T15:00:00Z",
+            },
+        )
+        assert missing_resp.status_code == 404
+
     def test_system_diagnostics_endpoint(self, client_with_db):
         """Test the system diagnostics endpoint returns status of all 7 agents and system state."""
         client, _ = client_with_db

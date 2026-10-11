@@ -234,7 +234,10 @@ def reschedule_visit_api(payload: VisitRescheduleRequest, db: Session = Depends(
             "message": "Visit successfully rescheduled.",
         }
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        err = str(ve)
+        if "not found" in err.lower():
+            raise HTTPException(status_code=404, detail=err)
+        raise HTTPException(status_code=400, detail=err)
 
 
 # -------------------------------------------------------------
@@ -537,7 +540,10 @@ def get_tenant_late_fees(
             "per_day_penalty": per_day_penalty,
         })
     except ValueError as ve:
-        raise HTTPException(status_code=404, detail=str(ve))
+        err = str(ve)
+        if "not found" in err.lower():
+            raise HTTPException(status_code=404, detail=err)
+        raise HTTPException(status_code=400, detail=err)
 
 
 @router.get("/vacancy/downtime-loss")
