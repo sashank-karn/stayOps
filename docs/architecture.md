@@ -1,85 +1,63 @@
-# StayOps AI — Architecture
+# StayOps AI — Technical Architecture Specification
 
-## 1. What this is
+## 1. Multi-Agent System Overview
+StayOps AI organizes property operations around a team of seven specialized agents coordinated through structured `AgentMessage` envelopes and an authoritative relational operational data store.
 
-StayOps AI is a **multi-agent AI system** for PG, hostel, and co-living operations. The core
-is a team of specialized agents that collaborate — not a dashboard with a single chatbot.
+### Communication Pattern
+- **Loose Coupling:** Agents communicate strictly via schema-validated contracts (`AgentMessage`).
+- **Parallel Execution:** Independent operational checks run concurrently (e.g. Vacancy Risk + Rent Ledger Audit).
+- **Auditability:** Every task invocation is recorded in `AgentTaskRecord` with duration, inputs, outputs, and errors.
+- **Human-in-the-Loop:** Actions exceeding ₹2,000 INR require explicit property manager approval through `ApprovalRequest`.
 
-The flagship capability is **Autonomous Vacancy & Revenue Recovery**: instead of reporting
-"17 rooms are vacant," the system reasons "Room 204 will likely be vacant in 15 days, these
-5 existing leads match it, start the booking workflow" — a chain that spans several agents.
+---
 
-## 2. Agents
-
-```
-                           ┌─────────────────────┐
-        user / system ───► │   Orchestrator      │ ◄── decides who runs,
-                           │   (coordination)    │     passes context,
-                           └──────────┬──────────┘     combines results
-                                      │
-        ┌───────────────┬─────────────┼──────────────┬────────────────┐
-        ▼               ▼             ▼              ▼                ▼
-   ┌─────────┐    ┌────────────┐ ┌───────────┐ ┌────────────┐ ┌──────────────────┐
-   │ Leasing │    │  Tenant    │ │Maintenance│ │Collections │ │ Vacancy & Revenue│
-   │         │    │  Support   │ │ & Vendor  │ │            │ │   (flagship)     │
-   └─────────┘    └────────────┘ └───────────┘ └────────────┘ └──────────────────┘
-        ▲                                                             │
-        └───────────────── triggered to contact matched leads ───────┘
-
-                           ┌─────────────────────┐
-   every execution ──────► │   Facilitator       │  detects failures/conflicts,
-   is monitored by         │   (monitoring)      │  retries, escalates to human
-                           └─────────────────────┘
-```
-
-| Agent | Core job |
-|-------|----------|
-| **Lead & Leasing** | Enquiry → room search → recommendation → lead → visit → booking |
-| **Tenant Support** | Tenant comms, FAQs, complaint triage, tickets, routing |
-| **Maintenance & Vendor** | Categorize, prioritize, pick vendor, track job/cost, request approval |
-| **Rent & Collections** | Due dates, reminders, follow-ups, escalation, summaries |
-| **Vacancy & Revenue Recovery** | Detect/predict vacancy, match leads, estimate loss, trigger leasing |
-| **Orchestrator** | Route, pass context, maintain task state, combine outputs, escalate |
-| **Facilitator** | Monitor execution, detect failure/conflict, retry, log, escalate |
-
-## 3. Agent communication
-
-Agents never call each other as bare functions. Each hand-off is a structured
-`AgentMessage` (`shared/schemas/agent_message.py`):
+## 2. Agent Responsibilities & Contracts
 
 ```
-task_id · sender_agent · receiver_agent · task_type · input_data ·
-context · priority · status · result · error · requires_approval · timestamps
++--------------------------------------------------------------------------+
+|                             API / UI Request                             |
++--------------------------------------------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+|                         Central Orchestrator Agent                       |
+|          - Workflow state management & task scheduling                   |
+|          - Parallel & sequential dependency dispatch                     |
+|          - Approval gate evaluation & response consolidation             |
++--------------------------------------------------------------------------+
+       |                  |                  |                  |
+       v                  v                  v                  v
++--------------+   +--------------+   +--------------+   +-----------------+
+| Tenant       |   | Vacancy &    |   | Rent &       |   | Maintenance &   |
+| Support      |   | Revenue      |   | Collections  |   | Vendor          |
+| Agent        |   | Agent        |   | Agent        |   | Agent           |
++--------------+   +--------------+   +--------------+   +-----------------+
+                          |
+                          v
+                   +--------------+
+                   | Lead &       |
+                   | Leasing      |
+                   | Agent        |
+                   +--------------+
+                          |
+                          v
++--------------------------------------------------------------------------+
+|                     Monitoring & Facilitator Agent                       |
+|           - Output schema validation & contradiction detection           |
+|           - Execution health verification & audit reporting              |
++--------------------------------------------------------------------------+
 ```
 
-Every message/task is persisted (`AgentTasks`, `AgentMessages`, `AgentLogs`) so the
-dashboard's **Agent Activity** timeline can replay exactly which agent did what, who it
-contacted, and the outcome. That timeline is the primary evidence the system is genuinely
-multi-agent.
+---
 
-## 4. Shared memory
+## 3. Flagship Scenario: 15-Day Move-Out Flow Execution
 
-- **Short-term:** the current conversation/workflow state carried in the agent graph state
-  and the `context` field of messages.
-- **Long-term:** tenant conversations, property info, FAQs, past maintenance, vendor history,
-  prior enquiries, booking history — stored in PostgreSQL, with a `vector` column
-  (**pgvector**) for semantic retrieval.
-
-## 5. Human-in-the-loop
-
-Expensive or sensitive actions (large maintenance spend above `APPROVAL_COST_THRESHOLD`,
-vendor payments, account/record changes) set `requires_approval=True` and wait for owner
-approval. The dashboard labels actions as **auto-executed** vs **human-approved**.
-
-## 6. Configurable LLM
-
-Nothing hard-codes a provider. `shared/llm/provider.py#get_llm()` reads `LLM_PROVIDER`
-from `.env` and returns the matching LangChain chat model (OpenAI or Gemini today, more
-later). Swapping providers is a config change.
-
-## 7. Flagship demo scenario
-
-"A tenant is moving out" → Tenant Support → Orchestrator → Vacancy & Revenue (find matching
-leads) → Leasing (follow up, schedule visit, book) → Collections (check existing payment) →
-Maintenance (prepare room). The dashboard then shows the upcoming vacancy, matched leads,
-follow-ups, visit, room/payment/maintenance status, revenue impact, and the agent timeline.
+1. **Trigger:** Resident submits checkout notice specifying move-out date.
+2. **Step 1 — Tenant Support Agent:** Validates resident identity, room number, and updates status to `notice`.
+3. **Step 2 — Concurrent Branch:**
+   - **Branch A (Vacancy & Revenue):** Projects downtime loss (`₹533/day`) and queries `Lead` table for prospective tenants matching the room type and location.
+   - **Branch B (Rent & Collections):** Audits monthly payment ledger, verifies outstanding balance, and computes deposit refund after deductions.
+4. **Step 3 — Lead & Leasing Agent:** Receives qualified matching leads from Branch A and formats personalized property visit proposals.
+5. **Step 4 — Maintenance & Vendor Agent:** Schedules room turnover deep clean with registered contractor. Flags `requires_approval = True` if cost > ₹2,000 threshold.
+6. **Step 5 — Facilitator Agent:** Validates that all schemas contain required keys, verifies absence of contradictions, and outputs execution audit health report.
+7. **Step 6 — Orchestrator Consolidation:** Synthesizes final response for property manager dashboard and logs workflow event.
