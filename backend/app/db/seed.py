@@ -1,5 +1,6 @@
 """Database seeder populating realistic PG properties, rooms, beds, tenants, vendors, and leads."""
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 from sqlalchemy.orm import Session
 from backend.app.db.session import SessionLocal, Base, engine
 from backend.app.models.property import Property, Room, Bed
@@ -9,8 +10,34 @@ from backend.app.models.maintenance import Vendor, MaintenanceTicket
 from backend.app.models.financial import RentRecord, PaymentTransaction
 
 
-def seed_database(db: Session | None = None) -> dict[str, int]:
+from backend.app.models.user import User
+from backend.app.core.auth import hash_password
+
+
+def seed_users(db: Session) -> None:
+    """Ensure default system accounts exist for demonstration."""
+    default_users = [
+        {"email": "admin@stayops.ai", "full_name": "Admin Director", "role": "admin", "password": "Admin@123"},
+        {"email": "manager@stayops.ai", "full_name": "Rajesh Sharma (PM)", "role": "property_manager", "password": "Manager@123"},
+        {"email": "resident@stayops.ai", "full_name": "Rohan Verma (Resident)", "role": "tenant", "password": "Resident@123"},
+    ]
+    for u in default_users:
+        existing = db.query(User).filter(User.email == u["email"]).first()
+        if not existing:
+            new_u = User(
+                email=u["email"],
+                hashed_password=hash_password(u["password"]),
+                full_name=u["full_name"],
+                role=u["role"],
+                is_active=True,
+            )
+            db.add(new_u)
+    db.commit()
+
+
+def seed_database(db: Session | None = None) -> dict[str, Any]:
     """Seed comprehensive initial sample data into the database."""
+    from typing import Any
     # Ensure tables exist
     close_after = False
     if db is None:
@@ -21,9 +48,12 @@ def seed_database(db: Session | None = None) -> dict[str, int]:
         Base.metadata.create_all(bind=db.get_bind())
 
     try:
-        # Check if already seeded
+        # Seed users if missing
+        seed_users(db)
+
+        # Check if properties already seeded
         if db.query(Property).first():
-            return {"status": "already_seeded"}
+            return {"status": "already_seeded", "users_seeded": True}
 
         # 1. Properties
         p1 = Property(
