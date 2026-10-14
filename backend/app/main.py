@@ -35,10 +35,23 @@ app.include_router(api_router)
 @app.on_event("startup")
 def on_startup():
     """Ensure database tables and sample data are ready on boot."""
+    from sqlalchemy import text
     from backend.app.db.session import engine, Base
     from backend.app.db.seed import seed_database
     try:
         Base.metadata.create_all(bind=engine)
+        # Ensure is_verified column exists on users table for seamless schema sync
+        with engine.begin() as conn:
+            try:
+                if "sqlite" in str(engine.url):
+                    cols = [r[1] for r in conn.execute(text("PRAGMA table_info(users)")).fetchall()]
+                    if cols and "is_verified" not in cols:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 1"))
+                else:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE"))
+            except Exception as mig_err:
+                import logging
+                logging.getLogger(__name__).debug("Column migration note: %s", mig_err)
         seed_database()
     except Exception as e:
         import logging
@@ -47,7 +60,7 @@ def on_startup():
 # CORS so the Next.js dashboard can call the API during development.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
+    allow_origins=[settings.frontend_url, "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

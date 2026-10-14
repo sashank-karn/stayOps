@@ -1,5 +1,6 @@
 """StayOps SQLAlchemy Domain Models."""
 from backend.app.models.base import Base, TimestampMixin, SoftDeleteMixin, UUIDMixin, utc_now
+from backend.app.models.user import User, EmailVerificationCode
 from backend.app.models.property import Property, Room, Bed
 from backend.app.models.tenant import Tenant, Lease
 from backend.app.models.lead import Lead, PropertyVisit
@@ -13,6 +14,7 @@ __all__ = [
     "SoftDeleteMixin",
     "UUIDMixin",
     "utc_now",
+    "User",
     "Property",
     "Room",
     "Bed",
