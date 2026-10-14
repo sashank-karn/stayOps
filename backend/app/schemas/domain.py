@@ -1,7 +1,36 @@
 """Pydantic v2 schemas for request validation, serialization, and agent contracts."""
 from datetime import date, datetime
+import re
 from typing import Any, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+PHONE_REGEX = re.compile(r"^\+?[0-9\s\-()]{7,25}$")
+
+
+def validate_email_str(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    val = value.strip()
+    if not val:
+        return None
+    if not EMAIL_REGEX.match(val):
+        raise ValueError(f"Invalid email address format: '{val}'")
+    return val.lower()
+
+
+def validate_phone_str(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    val = value.strip()
+    if not val:
+        return None
+    digits = re.sub(r"\D", "", val)
+    if len(digits) < 7 or len(digits) > 16:
+        raise ValueError(f"Invalid phone number '{val}'. Must contain between 7 and 16 digits.")
+    if not PHONE_REGEX.match(val):
+        raise ValueError(f"Invalid phone number format: '{val}'")
+    return val
 
 
 # ---------------------------------------------------------
@@ -59,7 +88,7 @@ class RoomRead(RoomBase):
 
 
 class BedBase(BaseModel):
-    room_id: str
+    room_id: Optional[str] = None
     bed_label: str
     status: str = "available"  # available, occupied, reserved, maintenance
     monthly_rent: float = Field(default=0.0, ge=0.0)
@@ -89,6 +118,22 @@ class TenantBase(BaseModel):
     id_proof_type: Optional[str] = None
     id_proof_number: Optional[str] = None
     status: str = "active"  # active, notice, moved_out
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def check_phone(cls, v: str) -> str:
+        res = validate_phone_str(v)
+        if not res:
+            raise ValueError("Valid phone number is required.")
+        return res
 
 
 class TenantCreate(TenantBase):
@@ -140,6 +185,19 @@ class LeadBase(BaseModel):
     status: str = "new"  # new, contacted, matched, visit_scheduled, converted, lost
     source: str = "website"
     notes: Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: Optional[str]) -> Optional[str]:
+        return validate_email_str(v)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def check_phone(cls, v: str) -> str:
+        res = validate_phone_str(v)
+        if not res:
+            raise ValueError("Valid phone number is required.")
+        return res
 
 
 class LeadCreate(LeadBase):
@@ -360,3 +418,166 @@ class LeadInquiryResponse(BaseModel):
     visit_suggested: bool
     scheduled_visit: Optional[dict[str, Any]] = None
     agent_response: str
+
+
+# ---------------------------------------------------------
+# User Authentication & Role Schemas
+# ---------------------------------------------------------
+
+class UserRegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=6, max_length=128)
+    full_name: str = Field(..., min_length=2, max_length=255)
+    role: Optional[str] = "property_manager"  # admin, property_manager, tenant
+    otp: Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+
+class SendOTPRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    purpose: Optional[str] = "registration"
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+
+class VerifyOTPRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    otp: str = Field(..., min_length=4, max_length=10)
+    purpose: Optional[str] = "registration"
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+
+class OTPResponse(BaseModel):
+    success: bool
+    message: str
+    email: str
+    expires_in_seconds: int = 600
+    dev_otp: Optional[str] = None
+
+
+class UserLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: dict[str, Any]
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str
+    is_active: bool
+    is_verified: bool = False
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------
+# Entity CRUD Upgrades & Payments
+# ---------------------------------------------------------
+
+class PropertyUpdate(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    total_floors: Optional[int] = None
+    rules_summary: Optional[str] = None
+    amenities: Optional[List[str]] = None
+    manager_name: Optional[str] = None
+    manager_phone: Optional[str] = None
+    manager_email: Optional[str] = None
+
+
+class TenantUpdate(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    status: Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: Optional[str]) -> Optional[str]:
+        return validate_email_str(v)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def check_phone(cls, v: Optional[str]) -> Optional[str]:
+        return validate_phone_str(v)
+
+
+class RentPaymentRequest(BaseModel):
+    amount: float = Field(..., gt=0.0)
+    payment_method: str = "UPI"  # UPI, Bank Transfer, Card, Cash
+    notes: Optional[str] = "Demo recorded payment"
+
+
+class TicketCreateRequest(BaseModel):
+    property_id: str
+    room_id: Optional[str] = None
+    tenant_id: Optional[str] = None
+    title: str = Field(..., min_length=3, max_length=200)
+    description: str
+    category: str = "General"  # Plumbing, Electrical, Appliance, Housekeeping, Wi-Fi, General
+    severity: str = "Medium"  # Emergency, High, Medium, Low
+
+
+class TicketStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="open, assigned, in_progress, resolved, cancelled")
+    resolution_notes: Optional[str] = None
+    actual_cost: Optional[float] = None
+
+
+class TicketAssignRequest(BaseModel):
+    vendor_id: str
+    estimated_cost: Optional[float] = None
+
+
+# ---------------------------------------------------------
+# Interactive Agent Workspace Dispatch
+# ---------------------------------------------------------
+
+class AgentDispatchTaskRequest(BaseModel):
+    prompt: str = Field(..., min_length=3, description="Task instructions or query for the agent")
+    target_agent: Optional[str] = Field(None, description="Specific agent name, or None for automatic orchestrator routing")
+    context: Optional[dict[str, Any]] = Field(default_factory=dict, description="Optional parameter context")
+
+
+class AgentDispatchTaskResponse(BaseModel):
+    workflow_id: str
+    status: str
+    primary_agent: str
+    executed_agents: List[str]
+    response: str
+    data: Optional[dict[str, Any]] = None
+    execution_time_ms: float
+    trace_steps: List[dict[str, Any]] = Field(default_factory=list)
+

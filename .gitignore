@@ -56,3 +56,6 @@ uploads/
 # ---------- Docker ----------
 docker/data/
 
+# ---------- Local scratch scripts ----------
+scratch/
+
