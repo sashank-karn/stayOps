@@ -59,12 +59,17 @@ def get_llm(**overrides: Any):
             raise ImportError(
                 "langchain-google-genai is not installed. Install agent deps (Phase 4)."
             ) from exc
+        req_timeout = overrides.pop("request_timeout", 3.0)
+        retries = overrides.pop("max_retries", 1)
         return ChatGoogleGenerativeAI(
             model=model,
             temperature=temperature,
             google_api_key=settings.gemini_api_key,
+            request_timeout=req_timeout,
+            max_retries=retries,
             **overrides,
         )
+
 
     raise ValueError(
         f"Unknown LLM_PROVIDER={provider!r}. Supported: {', '.join(available_providers)}."

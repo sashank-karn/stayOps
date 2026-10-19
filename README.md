@@ -75,11 +75,12 @@ sequenceDiagram
 
 ## 3. Technology Stack
 
-- **Backend:** FastAPI, Python 3.13, Pydantic v2, SQLAlchemy 2.0 (PostgreSQL / SQLite fallback).
+- **Backend:** FastAPI, Python 3.12+, Pydantic v2, SQLAlchemy 2.0 (PostgreSQL / SQLite fallback).
 - **Multi-Agent Engine:** Autonomous AgentMessage contract architecture with parallel execution dispatch.
 - **LLM & Embeddings:** Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`), `models/gemini-embedding-001`, ChromaDB vector store.
-- **Frontend:** Next.js 14, React 18, TypeScript, Responsive Dark Mode Dashboard.
-- **Testing:** Pytest, pytest-asyncio, Starlette TestClient (95 automated unit, agent, workflow, and API tests passing).
+- **External Services:** Google Calendar (RFC 5545 `.ics` export), SMTP / Audit Email service, WhatsApp Business (E.164 normalization & simulator feed).
+- **Frontend:** Next.js 14, React 18, TypeScript, Responsive Dark Mode Dashboard with Services Hub.
+- **Testing:** Pytest, pytest-asyncio, Starlette TestClient (138 automated unit, agent, workflow, RAG, and integration tests passing).
 - **CI/CD:** GitHub Actions automated CI matrix running backend Pytest suite, Next.js build, and explicit TypeScript type checks.
 
 ---
@@ -93,6 +94,9 @@ sequenceDiagram
 
 # Install dependencies from pinned requirements
 pip install -r requirements.txt
+
+# Seed the database with sample properties, beds, tenants, and users
+python -m backend.app.db.seed
 
 # Run FastAPI backend
 uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
@@ -114,7 +118,7 @@ Open `http://localhost:3000` to interact with the StayOps Property Manager Dashb
 
 ### 3. Running Automated Tests
 ```bash
-# Run complete test suite (95 tests across all 7 agents, API endpoints, and workflows)
+# Run complete test suite (138 tests across all 7 agents, API endpoints, workflows, and integrations)
 pytest -v
 ```
 
@@ -138,5 +142,41 @@ pytest -v
 | `GET` | `/api/workflows/{id}` | Detailed task breakdown and timing for a specific workflow run |
 | `POST` | `/api/workflows/move-out` | Trigger the 15-day move-out multi-agent workflow |
 | `POST` | `/api/workflows/lead-inquiry` | Trigger lead qualification & room matching via Leasing Agent |
+| `GET` | `/api/integrations/status` | Live status of Gemini, SMTP, Calendar, WhatsApp, and Vector DB |
+| `POST` | `/api/notifications/email` | Dispatch resident email notification via SMTP or persistent dev audit log |
+| `GET` | `/api/notifications/history` | Audit trail of dispatched operational emails |
+| `POST` | `/api/calendar/schedule` | Schedule operations event / inspection with RFC 5545 `.ics` download |
+| `GET` | `/api/calendar/events` | Retrieve scheduled operations events |
+| `POST` | `/api/notifications/whatsapp` | Dispatch WhatsApp notice with E.164 phone normalization |
+| `GET` | `/api/notifications/whatsapp` | Retrieve resident WhatsApp simulator message feed |
 | `POST` | `/rag/query` | RAG semantic search over PG policies, syllabus, and house rules |
 | `GET` | `/health` | Service liveness health probe |
+
+---
+
+## 6. Step-by-Step Demonstration Walkthrough
+
+### Demonstrating the 15-Day Move-Out Workflow
+1. **Access the Dashboard**: Open `http://localhost:3000` in your browser.
+2. **Switch to Move-Out Automation**: Click **"Move-Out Automation"** in the sidebar.
+3. **Select Resident**: Select tenant `Rohan Mehta (Room 101, Bed 101-A)`.
+4. **Trigger Autonomous Workflow**: Click **"Execute 15-Day Move-Out Workflow"**.
+5. **Inspect Coordinated Multi-Agent Execution**:
+   - `Tenant Support Agent` validates notice date and active tenancy agreement.
+   - `Rent & Collections Agent` and `Vacancy & Revenue Agent` execute concurrently:
+     - Rent calculates deposit settlement balance (₹32,000 refund, ₹0 overdue).
+     - Vacancy projects downtime exposure and matches prospective lead Kavya Nair.
+   - `Lead & Leasing Agent` drafts custom visit outreach.
+   - `Maintenance & Vendor Agent` schedules pre-checkout inspection & estimates ₹2,350 turnover cost (automatically creates a Human-in-the-Loop approval entry for costs > ₹2,000).
+   - `Supervisory Facilitator` validates schema compliance, checks for zero contradictions, and signs off.
+6. **Inspect Autonomous External Integrations**:
+   - Under the results card, verify the **Autonomous External Integrations Dispatched** summary:
+     - **Calendar**: Pre-checkout room inspection is booked. Click **"Download .ics"** to export the calendar invitation.
+     - **Email Service**: Move-out notice & settlement statement dispatched to resident email.
+     - **WhatsApp Service**: Move-out reminder and checkout timeline dispatched with normalized E.164 phone number.
+7. **Verify Human-in-the-Loop Governance**:
+   - Switch to **"Approvals & Verification Queue"** tab.
+   - Review the turnover maintenance expense request (₹2,350) and click **"Approve"** to execute the contractor assignment.
+8. **Check Comms & Integrations Hub**:
+   - Switch to **"Services & Comms"** tab.
+   - Verify live service health cards, inspect the email dispatch history, view the operations calendar feed, and view the simulated resident WhatsApp inbox.

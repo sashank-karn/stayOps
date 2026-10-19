@@ -17,6 +17,7 @@ from backend.app.core.auth import hash_password
 def seed_users(db: Session) -> None:
     """Ensure default system accounts exist for demonstration."""
     default_users = [
+        {"email": "contact@sashankkarn.com.np", "full_name": "Sashank Karn (Admin)", "role": "admin", "password": "Admin@123"},
         {"email": "admin@stayops.ai", "full_name": "Admin Director", "role": "admin", "password": "Admin@123"},
         {"email": "manager@stayops.ai", "full_name": "Rajesh Sharma (PM)", "role": "property_manager", "password": "Manager@123"},
         {"email": "resident@stayops.ai", "full_name": "Rohan Verma (Resident)", "role": "tenant", "password": "Resident@123"},
@@ -30,8 +31,11 @@ def seed_users(db: Session) -> None:
                 full_name=u["full_name"],
                 role=u["role"],
                 is_active=True,
+                is_verified=True,
             )
             db.add(new_u)
+        else:
+            existing.is_verified = True
     db.commit()
 
 

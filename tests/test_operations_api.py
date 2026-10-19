@@ -1,6 +1,6 @@
 """API tests for StayOps Operations & Multi-Agent endpoints."""
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -209,11 +209,12 @@ class TestOperationsAPI:
         session.commit()
         session.refresh(visit)
 
+        future_time = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         resched_resp = client.post(
             "/api/visits/reschedule",
             json={
                 "visit_id": visit.id,
-                "new_scheduled_time": "2026-10-18T15:00:00Z",
+                "new_scheduled_time": future_time,
                 "reason": "Rescheduled for weekend visit",
             },
         )

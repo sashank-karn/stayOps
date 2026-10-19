@@ -577,7 +577,48 @@ class AgentDispatchTaskResponse(BaseModel):
     primary_agent: str
     executed_agents: List[str]
     response: str
+    llm_synthesis: Optional[str] = None
+    llm_attribution: Optional[dict[str, Any]] = None
     data: Optional[dict[str, Any]] = None
     execution_time_ms: float
     trace_steps: List[dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------
+# Notifications, Calendar & Integrations Schemas
+# ---------------------------------------------------------
+
+class EmailNotificationRequest(BaseModel):
+    to_email: str = Field(..., min_length=3)
+    subject: str = Field(..., min_length=2)
+    message: str = Field(..., min_length=2)
+    notification_type: Optional[str] = "general"
+
+
+class CalendarScheduleRequest(BaseModel):
+    event_type: str = Field(default="property_visit")  # property_visit, room_inspection, turnover_maintenance
+    title: str = Field(..., min_length=3)
+    start_time: str = Field(..., description="ISO 8601 datetime string")
+    duration_minutes: Optional[int] = 45
+    location: Optional[str] = "StayOps PG, Bengaluru"
+    attendee_name: Optional[str] = "Resident"
+    attendee_email: Optional[str] = "resident@stayops.ai"
+    description: Optional[str] = None
+
+
+class WhatsAppNotificationRequest(BaseModel):
+    recipient_phone: str = Field(..., min_length=10)
+    template_name: str = "general_alert"
+    preview_text: str = Field(..., min_length=3)
+    parameters: Optional[dict[str, Any]] = Field(default_factory=dict)
+
+
+class IntegrationsStatusResponse(BaseModel):
+    gemini_configured: bool
+    email_smtp_configured: bool
+    google_calendar_configured: bool
+    whatsapp_configured: bool
+    vector_store_ready: bool
+    active_llm_provider: str
+
 

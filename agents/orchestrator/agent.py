@@ -386,7 +386,83 @@ class OrchestratorAgent:
         )
 
         # -------------------------------------------------------------
-        # STEP 6: Final Workflow Aggregation
+        # STEP 6: External Integrations Dispatch (Email, Calendar, WhatsApp)
+        # -------------------------------------------------------------
+        from backend.app.services.email_service import send_move_out_notice_email
+        from backend.app.services.calendar_service import schedule_calendar_event
+        from backend.app.services.whatsapp_service import send_whatsapp_notification
+
+        tenant_email = support_res.get("email") or "resident@stayops.ai"
+        tenant_phone = support_res.get("phone") or "+919876543210"
+        tenant_name = support_res.get("tenant_name", "Resident")
+
+        # 1. Calendar scheduling for room turnover inspection
+        try:
+            insp_date = (
+                datetime.fromisoformat(expected_checkout_str) - timedelta(days=1)
+                if expected_checkout_str
+                else datetime.now(timezone.utc) + timedelta(days=14)
+            )
+            cal_res = schedule_calendar_event(
+                event_type="room_inspection",
+                title=f"Turnover Inspection: Room {room_number} ({tenant_name})",
+                description=(
+                    f"Pre-checkout inspection & room turnover assessment for {tenant_name} "
+                    f"at {property_name}. Scheduled via StayOps AI Move-Out Workflow."
+                ),
+                start_time=insp_date.isoformat(),
+                duration_minutes=45,
+                location=f"{property_name}, Room {room_number}",
+                attendee_name=tenant_name,
+                attendee_email=tenant_email,
+            )
+        except Exception as e:
+            logger.warning("Calendar scheduling failed: %s", e)
+            cal_res = {"status": "error", "error": str(e)}
+
+        # 2. Email delivery / notification
+        try:
+            email_res = send_move_out_notice_email(
+                recipient_email=tenant_email,
+                tenant_name=tenant_name,
+                room_number=room_number,
+                expected_move_out_date=expected_checkout_str or "In 15 Days",
+                net_deposit_settlement=rent_res.get("net_deposit_settlement", 0.0),
+            )
+        except Exception as e:
+            logger.warning("Email notification failed: %s", e)
+            email_res = {"status": "error", "error": str(e)}
+
+        # 3. WhatsApp notification
+        try:
+            wa_text = (
+                f"Hello {tenant_name}, your 15-day move-out notice for Room {room_number} "
+                f"at {property_name} is registered. Expected checkout: {expected_checkout_str}. "
+                f"Estimated net deposit refund: ₹{rent_res.get('net_deposit_settlement', 0.0):,.0f}. "
+                f"A pre-checkout inspection has been scheduled."
+            )
+            wa_res = send_whatsapp_notification(
+                recipient_phone=tenant_phone,
+                message=wa_text,
+                template_name="move_out_notice",
+                parameters={"room": room_number, "date": expected_checkout_str},
+            )
+        except Exception as e:
+            logger.warning("WhatsApp notification failed: %s", e)
+            wa_res = {"status": "error", "error": str(e)}
+
+        integrations_report = {
+            "calendar": cal_res,
+            "email": email_res,
+            "whatsapp": wa_res,
+        }
+
+        if timeline:
+            timeline[-1]["integrations"] = integrations_report
+
+
+        # -------------------------------------------------------------
+        # STEP 7: Final Workflow Aggregation
         # -------------------------------------------------------------
         final_status = "needs_approval" if needs_approval else "completed"
         wf.status = final_status
@@ -402,6 +478,7 @@ class OrchestratorAgent:
             "turnover_cost": maint_res.get("estimated_cost", 0.0),
             "pending_approval": needs_approval,
             "facilitator_health": fac_report["facilitator_status"],
+            "integrations": integrations_report,
         }
         wf.summary_result = summary
         self.db.commit()
@@ -421,6 +498,7 @@ class OrchestratorAgent:
             "facilitator_verification": fac_report,
             "pending_approval": needs_approval,
             "approval_details": approval_details,
+            "integrations": integrations_report,
             "timeline": timeline,
             "summary": summary,
         }
@@ -457,6 +535,44 @@ class OrchestratorAgent:
             execution_order=1,
         )
 
+        # External integrations for lead inquiry (Calendar visit booking & WhatsApp outreach)
+        integrations: dict[str, Any] = {}
+        lead_name = payload.get("name") or payload.get("lead_name") or "Prospective Resident"
+        lead_email = payload.get("email") or "lead@stayops.ai"
+        lead_phone = payload.get("phone") or "+919876543210"
+
+        from backend.app.services.calendar_service import schedule_calendar_event
+        from backend.app.services.whatsapp_service import send_whatsapp_notification
+
+        if result.get("suggest_visit", True):
+            try:
+                visit_time = datetime.now(timezone.utc) + timedelta(days=2, hours=4)
+                cal_res = schedule_calendar_event(
+                    event_type="property_visit",
+                    title=f"PG Property Visit Tour: {lead_name}",
+                    description=f"Guided accommodation visit & room tour for {lead_name}. Scheduled via StayOps AI Leasing Agent.",
+                    start_time=visit_time.isoformat(),
+                    duration_minutes=30,
+                    location="StayOps PG, Bengaluru",
+                    attendee_name=lead_name,
+                    attendee_email=lead_email,
+                )
+                integrations["calendar"] = cal_res
+            except Exception as e:
+                integrations["calendar"] = {"status": "error", "error": str(e)}
+
+            try:
+                wa_res = send_whatsapp_notification(
+                    recipient_phone=lead_phone,
+                    message=f"Hi {lead_name}, thanks for inquiring about StayOps PG! A guided room tour has been scheduled for you. Reply YES to confirm or RESCHEDULE to pick another slot.",
+                    template_name="lead_visit_confirmation",
+                    parameters={"name": lead_name},
+                )
+                integrations["whatsapp"] = wa_res
+            except Exception as e:
+                integrations["whatsapp"] = {"status": "error", "error": str(e)}
+
+        result["integrations"] = integrations
         wf.status = "completed"
         wf.summary_result = result
         self.db.commit()
@@ -469,6 +585,7 @@ class OrchestratorAgent:
             "matched_rooms": result.get("matched_rooms", []),
             "suggest_visit": result.get("suggest_visit", False),
             "agent_response": result.get("agent_message", ""),
+            "integrations": integrations,
         }
 
     def run_maintenance_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -819,12 +936,23 @@ class OrchestratorAgent:
             "summary": f"Facilitator certified execution compliance (confidence: {fac_verification.get('confidence_score', 0.98)}).",
         })
 
-        # Step 5: Finalize workflow execution
+        # Step 5: LLM attribution synthesis (Gemini or deterministic fallback)
+        from shared.llm.client import call_llm_with_attribution
+
+        synthesis_prompt = f"Prompt: {prompt}\nAgent Executed: {chosen_agent}\nFindings: {response_text}"
+        llm_text, llm_source, is_fallback = call_llm_with_attribution(
+            prompt=synthesis_prompt,
+            system_prompt="You are StayOps AI Executive Assistant. Summarize operational findings crisply for the property manager."
+        )
+
+        # Step 6: Finalize workflow execution
         total_time_ms = round((time.time() - start_time) * 1000, 2)
         wf.status = "completed"
         wf.summary_result = {
             "primary_agent": chosen_agent,
             "response": response_text,
+            "llm_synthesis": llm_text,
+            "llm_attribution": {"source": llm_source, "is_fallback": is_fallback},
             "execution_time_ms": total_time_ms,
             "facilitator_verification": fac_verification,
         }
@@ -836,7 +964,10 @@ class OrchestratorAgent:
             "primary_agent": chosen_agent,
             "executed_agents": executed_agents + [self.facilitator.name],
             "response": response_text,
+            "llm_synthesis": llm_text,
+            "llm_attribution": {"source": llm_source, "is_fallback": is_fallback},
             "data": result_data,
             "execution_time_ms": total_time_ms,
             "trace_steps": trace_steps,
         }
+

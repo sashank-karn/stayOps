@@ -157,6 +157,8 @@ def record_move_out_notice(
         "bed_label": details.get("bed_label"),
         "monthly_rent": details.get("monthly_rent"),
         "security_deposit": details.get("security_deposit"),
+        "email": details.get("email") or tenant.email,
+        "phone": details.get("phone") or tenant.phone,
         "status": "notice_recorded",
         "message": (
             f"Move-out notice successfully recorded for {tenant.full_name}. "

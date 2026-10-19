@@ -61,7 +61,20 @@ class Settings(BaseSettings):
     whatsapp_api_url: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_access_token: str = ""
+    whatsapp_token: str = ""
     whatsapp_verify_token: str = ""
+
+    # ---- Email / SMTP ----
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_pass: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+
+    # ---- Integrations / Calendar ----
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: str = ""
 
     # ---- Human-in-the-loop ----
     approval_cost_threshold: float = Field(

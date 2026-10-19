@@ -15,7 +15,7 @@ import logging
 import time
 from datetime import date, datetime, timezone
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, desc
 from sqlalchemy.orm import Session
@@ -71,7 +71,19 @@ from backend.app.schemas.domain import (
     TicketAssignRequest,
     AgentDispatchTaskRequest,
     AgentDispatchTaskResponse,
+    EmailNotificationRequest,
+    CalendarScheduleRequest,
+    WhatsAppNotificationRequest,
+    IntegrationsStatusResponse,
 )
+from backend.app.services.email_service import send_email_notification, get_email_history
+from backend.app.services.calendar_service import schedule_calendar_event, get_calendar_events
+from backend.app.services.whatsapp_service import (
+    send_whatsapp_notification,
+    get_whatsapp_messages,
+    WHATSAPP_LOG_STORE,
+)
+from shared.config import get_settings
 
 from agents.orchestrator.agent import OrchestratorAgent
 from agents.collections.agent import get_portfolio_financial_metrics
@@ -1344,4 +1356,182 @@ def get_system_notifications(db: Session = Depends(get_db)) -> dict[str, Any]:
         "urgent_count": sum(1 for n in notifications if n["severity"] in ["urgent", "critical"]),
         "notifications": notifications,
     }
+
+
+# -------------------------------------------------------------
+# 16. Integrations Status & Management (Gemini, Email, Calendar, WhatsApp, ChromaDB)
+# -------------------------------------------------------------
+
+@router.get("/integrations/status", response_model=IntegrationsStatusResponse)
+def get_integrations_status():
+    """Report real-time connectivity and fallback status across all external service integrations."""
+    settings = get_settings()
+
+    # ChromaDB verification
+    vector_ready = False
+    try:
+        from backend.app.rag.vectorstore import DEFAULT_PERSIST_DIR
+        import os
+        vector_ready = os.path.exists(DEFAULT_PERSIST_DIR)
+    except Exception:
+        vector_ready = False
+
+    email_smtp_ready = bool(
+        (getattr(settings, "smtp_user", "") or os.getenv("SMTP_USER"))
+        and (getattr(settings, "smtp_pass", "") or getattr(settings, "smtp_password", "") or os.getenv("SMTP_PASS"))
+    )
+    calendar_ready = bool(
+        getattr(settings, "google_calendar_client_id", "") and getattr(settings, "google_calendar_client_secret", "")
+    )
+    wa_token = getattr(settings, "whatsapp_access_token", "") or getattr(settings, "whatsapp_token", "") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    wa_phone = getattr(settings, "whatsapp_phone_number_id", "") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    whatsapp_ready = bool(wa_token and wa_phone)
+
+    return IntegrationsStatusResponse(
+        gemini_configured=settings.has_llm_key(),
+        email_smtp_configured=email_smtp_ready,
+        google_calendar_configured=calendar_ready,
+        whatsapp_configured=whatsapp_ready,
+        vector_store_ready=vector_ready,
+        active_llm_provider=settings.llm_provider if settings.has_llm_key() else "deterministic_local_fallback",
+    )
+
+
+# -------------------------------------------------------------
+# 17. Email Notifications & Logs
+# -------------------------------------------------------------
+
+@router.post("/notifications/email")
+def dispatch_email_notification(payload: EmailNotificationRequest):
+    """Dispatch an email notification or record development delivery."""
+    result = send_email_notification(
+        to_email=payload.to_email,
+        subject=payload.subject,
+        message=payload.message,
+        notification_type=payload.notification_type or "general",
+    )
+    return result
+
+
+@router.get("/notifications/history")
+def list_email_notifications():
+    """Retrieve audit history of dispatched email notifications."""
+    return {"emails": get_email_history()}
+
+
+# -------------------------------------------------------------
+# 18. Calendar Scheduling & Events (Google Calendar / iCal)
+# -------------------------------------------------------------
+
+@router.post("/calendar/schedule")
+def schedule_event(payload: CalendarScheduleRequest):
+    """Schedule property visit, inspection, or maintenance event with Google Calendar or RFC 5545 fallback."""
+    result = schedule_calendar_event(
+        event_type=payload.event_type,
+        title=payload.title,
+        description=payload.description or "",
+        start_time=payload.start_time,
+        duration_minutes=payload.duration_minutes or 45,
+        location=payload.location or "StayOps PG, Bengaluru",
+        attendee_name=payload.attendee_name or "Resident",
+        attendee_email=payload.attendee_email or "resident@stayops.ai",
+    )
+    return result
+
+
+@router.get("/calendar/events")
+def list_calendar_events():
+    """Retrieve all scheduled calendar events with .ics download support."""
+    return {"events": get_calendar_events()}
+
+
+# -------------------------------------------------------------
+# 19. WhatsApp Business Notifications & Preview
+# -------------------------------------------------------------
+
+@router.post("/notifications/whatsapp")
+def dispatch_whatsapp_notification(payload: WhatsAppNotificationRequest):
+    """Dispatch WhatsApp message via Meta Cloud API or record simulator preview."""
+    result = send_whatsapp_notification(
+        recipient_phone=payload.recipient_phone,
+        message=payload.preview_text,
+        template_name=payload.template_name,
+        parameters=payload.parameters or {},
+    )
+    return result
+
+
+@router.get("/notifications/whatsapp")
+def list_whatsapp_messages():
+    """Retrieve audit history and simulator inbox for WhatsApp messages."""
+    return {"messages": get_whatsapp_messages()}
+
+
+# -------------------------------------------------------------
+# 20. WhatsApp Webhooks (Meta Cloud API Callback & Verification)
+# -------------------------------------------------------------
+
+@router.get("/webhook/whatsapp")
+def verify_whatsapp_webhook(
+    hub_mode: Optional[str] = Query(None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
+):
+    """
+    Meta WhatsApp Cloud API Webhook Verification Endpoint.
+    Meta makes a GET request to verify the callback URL with hub.verify_token.
+    """
+    cfg = get_settings()
+    expected_token = getattr(cfg, "whatsapp_verify_token", "") or "stayops_wa_verify_token_2026"
+
+    if hub_mode == "subscribe" and hub_verify_token == expected_token:
+        logger.info("[WhatsApp Webhook] Verification successful for token: %s", hub_verify_token)
+        return Response(content=hub_challenge or "", media_type="text/plain")
+
+    logger.warning("[WhatsApp Webhook] Verification failed (token mismatch): %s vs expected %s", hub_verify_token, expected_token)
+    raise HTTPException(status_code=403, detail="Verification token mismatch")
+
+
+@router.post("/webhook/whatsapp")
+async def handle_whatsapp_webhook(request: Request):
+    """
+    Meta WhatsApp Cloud API Webhook Event Handler.
+    Receives incoming resident messages and message delivery receipts.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    logger.info("[WhatsApp Webhook] Incoming event payload: %s", body)
+
+    # Process incoming message entries if present
+    entries = body.get("entry", [])
+    for entry in entries:
+        changes = entry.get("changes", [])
+        for change in changes:
+            value = change.get("value", {})
+            messages = value.get("messages", [])
+            for msg in messages:
+                from_number = msg.get("from")
+                msg_text = msg.get("text", {}).get("body", "")
+                logger.info("[WhatsApp Webhook] Resident message from %s: '%s'", from_number, msg_text)
+                formatted_phone = f"+{from_number}" if from_number and not str(from_number).startswith("+") else str(from_number)
+                WHATSAPP_LOG_STORE.insert(0, {
+                    "id": f"wa-in-{len(WHATSAPP_LOG_STORE) + 1}",
+                    "channel": "whatsapp_incoming",
+                    "recipient_phone": formatted_phone,
+                    "template": "incoming_resident_reply",
+                    "parameters": {"text": msg_text},
+                    "preview_text": msg_text or "[Non-text WhatsApp message]",
+                    "status": "received",
+                    "is_live_dispatched": False,
+                    "external_message_id": msg.get("id"),
+                    "error": None,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+    return {"status": "ok"}
+
+
 

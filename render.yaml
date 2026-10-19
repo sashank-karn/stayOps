@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: stayops-api
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python -m backend.app.db.seed"
+    startCommand: "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DATABASE_URL
+        value: sqlite:///./stayops.db
+      - key: APP_ENV
+        value: production
+      - key: APP_NAME
+        value: StayOps AI
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "1440"
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-flash-latest
+      - key: LLM_TEMPERATURE
+        value: "0.2"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WHATSAPP_API_URL
+        value: https://graph.facebook.com/v25.0/1399803109881445/messages
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        value: "1399803109881445"
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        value: stayops_wa_verify_token_2026

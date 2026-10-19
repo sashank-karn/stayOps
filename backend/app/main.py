@@ -57,10 +57,20 @@ def on_startup():
         import logging
         logging.getLogger(__name__).warning("Startup DB init note: %s", e)
 
-# CORS so the Next.js dashboard can call the API during development.
+# CORS so the Next.js dashboard can call the API during development and on Vercel deployments.
+allowed_origins = [
+    settings.frontend_url,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+]
+if not settings.frontend_url or settings.frontend_url == "*":
+    allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
