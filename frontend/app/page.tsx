@@ -80,6 +80,19 @@ export default function Home() {
   const [otpSentMessage, setOtpSentMessage] = useState<string>("");
   const [otpCountdown, setOtpCountdown] = useState<number>(0);
 
+  // External Integrations & Comms state
+  const [integrationsStatus, setIntegrationsStatus] = useState<any>(null);
+  const [emailHistory, setEmailHistory] = useState<any[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
+  const [whatsappLogs, setWhatsappLogs] = useState<any[]>([]);
+  const [testEmailTo, setTestEmailTo] = useState<string>("manager@stayops.ai");
+  const [testEmailSub, setTestEmailSub] = useState<string>("StayOps Operations Update");
+  const [testEmailMsg, setTestEmailMsg] = useState<string>("Pre-checkout room turnover inspection passed all criteria.");
+  const [testWaPhone, setTestWaPhone] = useState<string>("9779825016096");
+  const [testWaMsg, setTestWaMsg] = useState<string>("Hi resident, your scheduled property inspection is confirmed for tomorrow 11:00 AM.");
+  const [commsFeedback, setCommsFeedback] = useState<string>("");
+  const [activeCommsSubTab, setActiveCommsSubTab] = useState<"status" | "email" | "calendar" | "whatsapp">("status");
+
   // Modals state
   const [modalType, setModalType] = useState<string | null>(null);
   const [modalSubmitting, setModalSubmitting] = useState<boolean>(false);
@@ -151,7 +164,7 @@ export default function Home() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [hRes, mRes, pRes, rRes, tRes, rrRes, lRes, tkRes, vRes, aRes, wRes, nRes, agRes, dRes] =
+      const [hRes, mRes, pRes, rRes, tRes, rrRes, lRes, tkRes, vRes, aRes, wRes, nRes, agRes, dRes, intRes, emHRes, calRes, waHRes] =
         await Promise.all([
           fetch(`${API_URL}/health`).then((r) => r.json()).catch(() => null),
           fetch(`${API_URL}/api/dashboard/metrics`).then((r) => r.json()).catch(() => null),
@@ -167,6 +180,10 @@ export default function Home() {
           fetch(`${API_URL}/api/notifications`).then((r) => r.json()).catch(() => null),
           fetch(`${API_URL}/api/agents`).then((r) => r.json()).catch(() => []),
           fetch(`${API_URL}/api/health/diagnostics`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/integrations/status`).then((r) => r.json()).catch(() => null),
+          fetch(`${API_URL}/api/notifications/history`).then((r) => r.json()).catch(() => ({ emails: [] })),
+          fetch(`${API_URL}/api/calendar/events`).then((r) => r.json()).catch(() => ({ events: [] })),
+          fetch(`${API_URL}/api/notifications/whatsapp`).then((r) => r.json()).catch(() => ({ messages: [] })),
         ]);
 
       setHealth(hRes);
@@ -183,6 +200,11 @@ export default function Home() {
       setNotifications(nRes);
       setAvailableAgents(agRes || []);
       setDiagnostics(dRes);
+      setIntegrationsStatus(intRes);
+      setEmailHistory(emHRes?.emails || []);
+      setCalendarEvents(calRes?.events || []);
+      setWhatsappLogs(waHRes?.messages || []);
+
 
       if (tRes && tRes.length > 0 && !selectedTenantId) {
         setSelectedTenantId(tRes[0].id);
@@ -224,7 +246,7 @@ export default function Home() {
     let email = "manager@stayops.ai";
     let password = "Manager@123";
     if (role === "admin") {
-      email = "admin@stayops.ai";
+      email = "contact@sashankkarn.com.np";
       password = "Admin@123";
     } else if (role === "tenant") {
       email = "resident@stayops.ai";
@@ -673,6 +695,74 @@ export default function Home() {
     }
   };
 
+  // External Integrations Handlers
+  const handleSendTestEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCommsFeedback("Dispatching email...");
+    try {
+      const res = await fetch(`${API_URL}/api/notifications/email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to_email: testEmailTo,
+          subject: testEmailSub,
+          message: testEmailMsg,
+        }),
+      });
+      const data = await res.json();
+      setCommsFeedback(`✓ Email ${data.status === "sent" ? "delivered live via SMTP" : "recorded in development log"} (Recipient: ${data.recipient || testEmailTo})`);
+      fetchData();
+    } catch (err: any) {
+      setCommsFeedback(`✗ Email dispatch failed: ${err.message}`);
+    }
+  };
+
+  const handleSendTestWhatsApp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCommsFeedback("Dispatching WhatsApp...");
+    try {
+      const res = await fetch(`${API_URL}/api/notifications/whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_phone: testWaPhone,
+          preview_text: testWaMsg,
+          template_name: "hello_world",
+        }),
+      });
+      const data = await res.json();
+      setCommsFeedback(`✓ WhatsApp ${data.status === "sent" ? "sent via Meta Cloud API" : "recorded in simulator inbox"} (Normalized: ${data.normalized_phone || testWaPhone})`);
+      fetchData();
+    } catch (err: any) {
+      setCommsFeedback(`✗ WhatsApp dispatch failed: ${err.message}`);
+    }
+  };
+
+  const handleScheduleTestCalendar = async () => {
+    setCommsFeedback("Booking operations event on calendar...");
+    try {
+      const res = await fetch(`${API_URL}/api/calendar/schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_type: "room_inspection",
+          title: "Pre-Checkout Inspection: Unit 201",
+          start_time: new Date(Date.now() + 86400000).toISOString(),
+          duration_minutes: 45,
+          location: "StayOps PG Indiranagar",
+          attendee_name: "Resident Lead",
+          attendee_email: "resident@stayops.ai",
+          description: "Room turnover and checkout condition audit.",
+        }),
+      });
+      const data = await res.json();
+      setCommsFeedback(`✓ Event booked: ${data.title} (${data.status})`);
+      fetchData();
+    } catch (err: any) {
+      setCommsFeedback(`✗ Calendar booking failed: ${err.message}`);
+    }
+  };
+
   return (
     <div className="app-layout">
       {/* ------------------------------------------------------------- */}
@@ -727,11 +817,21 @@ export default function Home() {
             </span>
           </button>
           <button
+            onClick={() => setActiveTab("integrations")}
+            className={`sidebar-item ${activeTab === "integrations" ? "active" : ""}`}
+          >
+            <span>🔌 Services &amp; Comms</span>
+            <span className="badge badge-purple" style={{ fontSize: 10, padding: "2px 6px" }}>
+              Live Status
+            </span>
+          </button>
+          <button
             onClick={() => setActiveTab("diagnostics")}
             className={`sidebar-item ${activeTab === "diagnostics" ? "active" : ""}`}
           >
             <span>🩺 Platform Health</span>
           </button>
+
 
           <div className="sidebar-section-title">Operations</div>
           <button
@@ -890,6 +990,7 @@ export default function Home() {
               {activeTab === "overview" && "📊 Property Operations Dashboard"}
               {activeTab === "agent_studio" && "✨ AI Operations Copilot"}
               {activeTab === "moveout_demo" && "📋 15-Day Move-Out Automation"}
+              {activeTab === "integrations" && "🔌 External Integrations & Communications Hub"}
               {activeTab === "properties" && "🏢 Properties & Unit Inventory"}
               {activeTab === "tenants" && "👥 Residents & Lease Agreements"}
               {activeTab === "rent_ledger" && "💳 Rent Collections & Ledger"}
@@ -1667,6 +1768,78 @@ export default function Home() {
                       ))}
                     </div>
                   )}
+
+                  {/* External Integrations Dispatch Summary */}
+                  {moveOutResult.integrations && (
+                    <div style={{ marginTop: 20, padding: 16, background: "#ffffff", borderRadius: 10, border: "1px solid #cbd5e1" }}>
+                      <div style={{ fontSize: 12, color: "#1e293b", textTransform: "uppercase", fontWeight: 700, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>📡 Autonomous External Integrations Dispatched</span>
+                        <span className="badge badge-success" style={{ fontSize: 10 }}>Confirmed Real Workflows</span>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+                        {/* Calendar */}
+                        <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>📅 Calendar Inspection</span>
+                            <span className="badge badge-success" style={{ fontSize: 10 }}>
+                              {moveOutResult.integrations.calendar?.status || "Scheduled"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#64748b" }}>
+                            {moveOutResult.integrations.calendar?.title}
+                          </div>
+                          {moveOutResult.integrations.calendar?.ics_data && (
+                            <button
+                              onClick={() => {
+                                const blob = new Blob([moveOutResult.integrations.calendar.ics_data], { type: "text/calendar" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = "pre_checkout_inspection.ics";
+                                a.click();
+                              }}
+                              className="btn-secondary"
+                              style={{ marginTop: 8, padding: "4px 10px", fontSize: 11, width: "100%", textAlign: "center" }}
+                            >
+                              ⬇ Download .ics Calendar Event
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Email */}
+                        <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>✉️ Resident Email</span>
+                            <span className="badge badge-info" style={{ fontSize: 10 }}>
+                              {moveOutResult.integrations.email?.status || "Queued"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#64748b" }}>
+                            Move-out acknowledgment &amp; deposit settlement breakdown dispatched to resident inbox.
+                          </div>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+                            ID: {moveOutResult.integrations.email?.id || "notif-email-logged"}
+                          </div>
+                        </div>
+
+                        {/* WhatsApp */}
+                        <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13 }}>💬 WhatsApp Notice</span>
+                            <span className="badge badge-purple" style={{ fontSize: 10 }}>
+                              {moveOutResult.integrations.whatsapp?.status || "Sent"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#64748b", fontStyle: "italic" }}>
+                            &ldquo;{moveOutResult.integrations.whatsapp?.preview_text || "Checkout reminder and inspection date dispatched."}&rdquo;
+                          </div>
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+                            Recipient: {moveOutResult.integrations.whatsapp?.recipient_phone || "+919876543210"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2279,6 +2452,496 @@ export default function Home() {
                       <strong>{diagnostics.system_state?.completed_workflows_count}</strong>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 11: External Integrations & Communications Hub */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === "integrations" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: "0 0 6px 0", fontSize: 20, fontWeight: 700 }}>
+                    🔌 External Integrations &amp; Communications Hub
+                  </h2>
+                  <div style={{ color: "#64748b", fontSize: 13 }}>
+                    Real-time operational status, dispatch tests, and audit trails for Gemini AI, SMTP Email, Google Calendar, WhatsApp Business, and Vector RAG.
+                  </div>
+                </div>
+                <button
+                  onClick={() => fetchData()}
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                >
+                  🔄 Refresh Status
+                </button>
+              </div>
+
+              {commsFeedback && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: "10px 14px",
+                    background: commsFeedback.startsWith("✓") ? "#ecfdf5" : "#eff6ff",
+                    border: `1px solid ${commsFeedback.startsWith("✓") ? "#a7f3d0" : "#bfdbfe"}`,
+                    color: commsFeedback.startsWith("✓") ? "#065f46" : "#1e40af",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>{commsFeedback}</span>
+                  <button
+                    onClick={() => setCommsFeedback("")}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#64748b" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Integration Status Cards Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
+              {/* Gemini / LLM */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>🧠 Gemini AI Copilot</div>
+                  <span
+                    className={`badge ${integrationsStatus?.gemini_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.gemini_configured ? "ONLINE" : "FALLBACK ENGINE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Active Provider: <strong>{integrationsStatus?.active_llm_provider || "deterministic_local_fallback"}</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.gemini_configured
+                    ? "Live external Gemini model calls enabled."
+                    : "Deterministic heuristic reasoning engine active (No external credentials required)."}
+                </div>
+              </div>
+
+              {/* SMTP Email */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>✉️ Email (SMTP)</div>
+                  <span
+                    className={`badge ${integrationsStatus?.email_smtp_configured ? "badge-success" : "badge-info"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.email_smtp_configured ? "SMTP LIVE" : "DEV SIMULATOR"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Audit History: <strong>{emailHistory.length} messages recorded</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.email_smtp_configured
+                    ? "Production SMTP server connected for OTPs & notices."
+                    : "Development mode active: Transactional emails logged to in-memory audit trail."}
+                </div>
+              </div>
+
+              {/* Google Calendar */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>📅 Google Calendar</div>
+                  <span
+                    className={`badge ${integrationsStatus?.google_calendar_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.google_calendar_configured ? "API CONNECTED" : "RFC 5545 ICAL"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Events Stored: <strong>{calendarEvents.length} operations events</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.google_calendar_configured
+                    ? "Google Calendar API synchronization enabled."
+                    : "Standard iCalendar RFC 5545 generator enabled (.ics downloads supported)."}
+                </div>
+              </div>
+
+              {/* WhatsApp */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>💬 WhatsApp Business</div>
+                  <span
+                    className={`badge ${integrationsStatus?.whatsapp_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.whatsapp_configured ? "META CLOUD LIVE" : "SIMULATOR ACTIVE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Message Log: <strong>{whatsappLogs.length} attempts</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.whatsapp_configured
+                    ? "Meta Graph API token active for WhatsApp messages."
+                    : "Development simulator active with E.164 phone normalization."}
+                </div>
+              </div>
+
+              {/* Vector RAG */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>📚 ChromaDB RAG</div>
+                  <span
+                    className={`badge ${integrationsStatus?.vector_store_ready ? "badge-success" : "badge-neutral"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.vector_store_ready ? "VECTOR DB READY" : "AVAILABLE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Collection: <strong>course_materials / PG Policies</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  Grounded semantic retrieval for property rules, tenant FAQs &amp; maintenance SLAs.
+                </div>
+              </div>
+            </div>
+
+            {/* Sub-tab Navigation */}
+            <div style={{ display: "flex", gap: 10, borderBottom: "1px solid #e2e8f0", marginBottom: 20 }}>
+              <button
+                onClick={() => setActiveCommsSubTab("status")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "status" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "status" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "status" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                📊 Service Overview
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("email")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "email" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "email" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "email" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                ✉️ Email Console &amp; History ({emailHistory.length})
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("calendar")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "calendar" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "calendar" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "calendar" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                📅 Operations Calendar ({calendarEvents.length})
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("whatsapp")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "whatsapp" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "whatsapp" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "whatsapp" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                💬 WhatsApp Business Simulator ({whatsappLogs.length})
+              </button>
+            </div>
+
+            {/* SUB-TAB: Service Overview */}
+            {activeCommsSubTab === "status" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>🚀 Quick Verification Actions</div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>✉️ Test Transactional Email Delivery</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Dispatches a test notification to manager@stayops.ai via SMTP or dev audit log.
+                      </div>
+                      <button onClick={handleSendTestEmail} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Send Test Email
+                      </button>
+                    </div>
+
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>📅 Schedule Inspection &amp; Generate .ics</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Creates a standard RFC 5545 calendar event for room inspection with downloadable invite.
+                      </div>
+                      <button onClick={handleScheduleTestCalendar} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Schedule Test Event
+                      </button>
+                    </div>
+
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>💬 Send Simulated WhatsApp Message</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Normalizes phone number to E.164 and delivers to the WhatsApp simulator inbox.
+                      </div>
+                      <button onClick={handleSendTestWhatsApp} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Dispatch Test WhatsApp
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>📋 Integration Architecture &amp; Credentials</div>
+                  <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>Google Gemini API:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>GEMINI_API_KEY</code> in <code>.env</code> to enable live Gemini 2.5 Flash reasoning. Safe deterministic fallback active when offline.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>SMTP Email Configuration:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>SMTP_HOST</code>, <code>SMTP_USER</code>, and <code>SMTP_PASSWORD</code> for live dispatch via Gmail / SendGrid / Postmark.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>Google Calendar OAuth:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>GOOGLE_CALENDAR_CLIENT_ID</code> and <code>GOOGLE_CALENDAR_CLIENT_SECRET</code> for direct Google Calendar sync.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>WhatsApp Meta Cloud API:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>WHATSAPP_TOKEN</code> and <code>WHATSAPP_PHONE_NUMBER_ID</code> to deliver real SMS/WhatsApp messages via Meta Graph API.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB: Email Console */}
+            {activeCommsSubTab === "email" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>✉️ Send Transactional Email</div>
+                  <form onSubmit={handleSendTestEmail}>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Recipient Email:</label>
+                      <input
+                        type="email"
+                        value={testEmailTo}
+                        onChange={(e) => setTestEmailTo(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Subject:</label>
+                      <input
+                        type="text"
+                        value={testEmailSub}
+                        onChange={(e) => setTestEmailSub(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Message Content:</label>
+                      <textarea
+                        value={testEmailMsg}
+                        onChange={(e) => setTestEmailMsg(e.target.value)}
+                        rows={4}
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ width: "100%", textAlign: "center" }}>
+                      Dispatch Email
+                    </button>
+                  </form>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>📋 Dispatched Email Audit Log</div>
+                  {emailHistory.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", padding: "30px 0" }}>
+                      No emails dispatched yet in this runtime session.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+                      {emailHistory.map((em, idx) => (
+                        <div key={idx} style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <strong style={{ fontSize: 13, color: "#0f172a" }}>{em.subject}</strong>
+                            <span className={`badge ${em.status === "sent" ? "badge-success" : "badge-info"}`} style={{ fontSize: 10 }}>
+                              {em.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#2563eb", marginTop: 4 }}>To: {em.recipient}</div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{em.summary || em.message}</div>
+                          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>
+                            {new Date(em.timestamp).toLocaleString()} · ID: {em.id}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB: Calendar Feed */}
+            {activeCommsSubTab === "calendar" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>Scheduled Operations Events &amp; Room Tours</div>
+                  <button onClick={handleScheduleTestCalendar} className="btn-primary" style={{ fontSize: 12 }}>
+                    + Book New Event (.ics)
+                  </button>
+                </div>
+
+                {calendarEvents.length === 0 ? (
+                  <div className="card" style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
+                    No events scheduled yet. Run the 15-Day Move-Out workflow or click &quot;+ Book New Event&quot; above.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                    {calendarEvents.map((ev, idx) => (
+                      <div key={idx} className="card" style={{ marginTop: 0, padding: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>{ev.title}</span>
+                          <span className="badge badge-success" style={{ fontSize: 10 }}>
+                            {ev.status}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#2563eb", marginTop: 6 }}>
+                          👤 {ev.attendee_name} ({ev.attendee_email})
+                        </div>
+                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                          📍 {ev.location} · ⏱️ {ev.duration_minutes} mins
+                        </div>
+                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                          Start: {new Date(ev.start_time).toLocaleString()}
+                        </div>
+                        {ev.ics_data && (
+                          <button
+                            onClick={() => {
+                              const blob = new Blob([ev.ics_data], { type: "text/calendar" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `${ev.id || "calendar_event"}.ics`;
+                              a.click();
+                            }}
+                            className="btn-secondary"
+                            style={{ marginTop: 12, width: "100%", textAlign: "center", fontSize: 11, padding: "5px 10px" }}
+                          >
+                            ⬇ Download RFC 5545 .ics File
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-TAB: WhatsApp Simulator */}
+            {activeCommsSubTab === "whatsapp" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>💬 WhatsApp Dispatch Simulator</div>
+                  <form onSubmit={handleSendTestWhatsApp}>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                        Recipient Phone (E.164 auto-normalized):
+                      </label>
+                      <input
+                        type="text"
+                        value={testWaPhone}
+                        onChange={(e) => setTestWaPhone(e.target.value)}
+                        placeholder="e.g. 9876543210 or +919876543210"
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Message Content:</label>
+                      <textarea
+                        value={testWaMsg}
+                        onChange={(e) => setTestWaMsg(e.target.value)}
+                        rows={4}
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ width: "100%", textAlign: "center" }}>
+                      Send WhatsApp Message
+                    </button>
+                  </form>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>📱 WhatsApp Resident Inbox (Simulator Feed)</div>
+                  {whatsappLogs.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", padding: "30px 0" }}>
+                      No WhatsApp messages logged yet. Run Move-Out workflow or dispatch a test message.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+                      {whatsappLogs.map((msg, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: 12,
+                            background: "#f0fdf4",
+                            border: "1px solid #bbf7d0",
+                            borderRadius: 10,
+                            position: "relative",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "#166534" }}>
+                              StayOps Operations ➜ {msg.recipient_phone}
+                            </span>
+                            <span className="badge badge-success" style={{ fontSize: 9 }}>
+                              {msg.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 13, color: "#1e293b", lineHeight: 1.4, margin: "4px 0" }}>
+                            {msg.preview_text}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+                            Template: <code>{msg.template}</code> · {new Date(msg.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2974,7 +3637,7 @@ export default function Home() {
                   >
                     <div>
                       <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>🛡️ System Administrator</div>
-                      <div style={{ fontSize: 12, color: "#64748b" }}>admin@stayops.ai</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>contact@sashankkarn.com.np</div>
                     </div>
                     <span className="badge" style={{ background: "#faf5ff", color: "#7c3aed", border: "1px solid #e9d5ff" }}>
                       Instant Access →
