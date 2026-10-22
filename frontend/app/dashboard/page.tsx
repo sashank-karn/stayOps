@@ -2867,9 +2867,1486 @@ export default function Home() {
           </div>
         )}
 
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 10: Platform Health & Diagnostics */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === "diagnostics" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <h2 style={{ margin: "0 0 6px 0", fontSize: 20, fontWeight: 700 }}>Platform Health &amp; Diagnostics</h2>
+              <div style={{ color: "#64748b", fontSize: 13 }}>
+                Live health verification across smart assistants, primary database integrity, and task queues.
+              </div>
+            </div>
 
+            {diagnostics && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>Active Assistants &amp; Services</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {diagnostics.agent_bus?.agents?.map((a: any) => (
+                      <div
+                        key={a.name}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          padding: "8px 12px",
+                          background: "#f8fafc", border: "1px solid #f1f5f9",
+                          borderRadius: 6,
+                          fontSize: 13,
+                        }}
+                      >
+                        <div>
+                          <strong style={{ color: "#2563eb" }}>{a.name}</strong> · {a.role}
+                        </div>
+                        <span className="badge badge-success">{a.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginTop: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>System Status &amp; Reliability</div>
+                  <div style={{ display: "grid", gap: 12, fontSize: 13 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#64748b" }}>Parallel Task Engine:</span>
+                      <strong style={{ color: "#16a34a" }}>{diagnostics.subsystem_resilience?.parallel_executor}</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#64748b" }}>Facilitator Supervisor:</span>
+                      <strong style={{ color: "#16a34a" }}>{diagnostics.subsystem_resilience?.facilitator_supervision}</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#64748b" }}>Background Task Queue:</span>
+                      <strong style={{ color: "#16a34a" }}>{diagnostics.subsystem_resilience?.dead_letter_queue}</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#64748b" }}>Completed Workflows:</span>
+                      <strong>{diagnostics.system_state?.completed_workflows_count}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* TAB 11: External Integrations & Communications Hub */}
+        {/* ------------------------------------------------------------- */}
+        {activeTab === "integrations" && (
+          <div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <h2 style={{ margin: "0 0 6px 0", fontSize: 20, fontWeight: 700 }}>
+                    🔌 External Integrations &amp; Communications Hub
+                  </h2>
+                  <div style={{ color: "#64748b", fontSize: 13 }}>
+                    Real-time operational status, dispatch tests, and audit trails for Gemini AI, SMTP Email, Google Calendar, WhatsApp Business, and Vector RAG.
+                  </div>
+                </div>
+                <button
+                  onClick={() => fetchData()}
+                  className="btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                >
+                  🔄 Refresh Status
+                </button>
+              </div>
+
+              {commsFeedback && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    padding: "10px 14px",
+                    background: commsFeedback.startsWith("✓") ? "#ecfdf5" : "#eff6ff",
+                    border: `1px solid ${commsFeedback.startsWith("✓") ? "#a7f3d0" : "#bfdbfe"}`,
+                    color: commsFeedback.startsWith("✓") ? "#065f46" : "#1e40af",
+                    borderRadius: 8,
+                    fontSize: 13,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>{commsFeedback}</span>
+                  <button
+                    onClick={() => setCommsFeedback("")}
+                    style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#64748b" }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Integration Status Cards Grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
+              {/* Gemini / LLM */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>🧠 Gemini AI Copilot</div>
+                  <span
+                    className={`badge ${integrationsStatus?.gemini_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.gemini_configured ? "ONLINE" : "FALLBACK ENGINE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Active Provider: <strong>{integrationsStatus?.active_llm_provider || "deterministic_local_fallback"}</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.gemini_configured
+                    ? "Live external Gemini model calls enabled."
+                    : "Deterministic heuristic reasoning engine active (No external credentials required)."}
+                </div>
+              </div>
+
+              {/* SMTP Email */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>✉️ Email (SMTP)</div>
+                  <span
+                    className={`badge ${integrationsStatus?.email_smtp_configured ? "badge-success" : "badge-info"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.email_smtp_configured ? "SMTP LIVE" : "DEV SIMULATOR"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Audit History: <strong>{emailHistory.length} messages recorded</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.email_smtp_configured
+                    ? "Production SMTP server connected for OTPs & notices."
+                    : "Development mode active: Transactional emails logged to in-memory audit trail."}
+                </div>
+              </div>
+
+              {/* Google Calendar */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>📅 Google Calendar</div>
+                  <span
+                    className={`badge ${integrationsStatus?.google_calendar_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.google_calendar_configured ? "API CONNECTED" : "RFC 5545 ICAL"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Events Stored: <strong>{calendarEvents.length} operations events</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.google_calendar_configured
+                    ? "Google Calendar API synchronization enabled."
+                    : "Standard iCalendar RFC 5545 generator enabled (.ics downloads supported)."}
+                </div>
+              </div>
+
+              {/* WhatsApp */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>💬 WhatsApp Business</div>
+                  <span
+                    className={`badge ${integrationsStatus?.whatsapp_configured ? "badge-success" : "badge-purple"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.whatsapp_configured ? "META CLOUD LIVE" : "SIMULATOR ACTIVE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Message Log: <strong>{whatsappLogs.length} attempts</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  {integrationsStatus?.whatsapp_configured
+                    ? "Meta Graph API token active for WhatsApp messages."
+                    : "Development simulator active with E.164 phone normalization."}
+                </div>
+              </div>
+
+              {/* Vector RAG */}
+              <div className="card" style={{ marginTop: 0, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>📚 ChromaDB RAG</div>
+                  <span
+                    className={`badge ${integrationsStatus?.vector_store_ready ? "badge-success" : "badge-neutral"}`}
+                    style={{ fontSize: 10 }}
+                  >
+                    {integrationsStatus?.vector_store_ready ? "VECTOR DB READY" : "AVAILABLE"}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: "#475569", marginTop: 8 }}>
+                  Collection: <strong>course_materials / PG Policies</strong>
+                </div>
+                <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                  Grounded semantic retrieval for property rules, tenant FAQs &amp; maintenance SLAs.
+                </div>
+              </div>
+            </div>
+
+            {/* Sub-tab Navigation */}
+            <div style={{ display: "flex", gap: 10, borderBottom: "1px solid #e2e8f0", marginBottom: 20 }}>
+              <button
+                onClick={() => setActiveCommsSubTab("status")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "status" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "status" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "status" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                📊 Service Overview
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("email")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "email" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "email" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "email" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                ✉️ Email Console &amp; History ({emailHistory.length})
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("calendar")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "calendar" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "calendar" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "calendar" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                📅 Operations Calendar ({calendarEvents.length})
+              </button>
+              <button
+                onClick={() => setActiveCommsSubTab("whatsapp")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  borderBottom: activeCommsSubTab === "whatsapp" ? "2px solid #2563eb" : "2px solid transparent",
+                  color: activeCommsSubTab === "whatsapp" ? "#2563eb" : "#64748b",
+                  fontWeight: activeCommsSubTab === "whatsapp" ? 700 : 500,
+                  padding: "8px 16px",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                💬 WhatsApp Business Simulator ({whatsappLogs.length})
+              </button>
+            </div>
+
+            {/* SUB-TAB: Service Overview */}
+            {activeCommsSubTab === "status" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>🚀 Quick Verification Actions</div>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>✉️ Test Transactional Email Delivery</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Dispatches a test notification to manager@stayops.ai via SMTP or dev audit log.
+                      </div>
+                      <button onClick={handleSendTestEmail} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Send Test Email
+                      </button>
+                    </div>
+
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>📅 Schedule Inspection &amp; Generate .ics</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Creates a standard RFC 5545 calendar event for room inspection with downloadable invite.
+                      </div>
+                      <button onClick={handleScheduleTestCalendar} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Schedule Test Event
+                      </button>
+                    </div>
+
+                    <div style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>💬 Send Simulated WhatsApp Message</div>
+                      <div style={{ fontSize: 12, color: "#64748b", margin: "4px 0 8px 0" }}>
+                        Normalizes phone number to E.164 and delivers to the WhatsApp simulator inbox.
+                      </div>
+                      <button onClick={handleSendTestWhatsApp} className="btn-secondary" style={{ fontSize: 11, padding: "5px 12px" }}>
+                        Dispatch Test WhatsApp
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>📋 Integration Architecture &amp; Credentials</div>
+                  <div style={{ display: "grid", gap: 10, fontSize: 13 }}>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>Google Gemini API:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>GEMINI_API_KEY</code> in <code>.env</code> to enable live Gemini 2.5 Flash reasoning. Safe deterministic fallback active when offline.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>SMTP Email Configuration:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>SMTP_HOST</code>, <code>SMTP_USER</code>, and <code>SMTP_PASSWORD</code> for live dispatch via Gmail / SendGrid / Postmark.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>Google Calendar OAuth:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>GOOGLE_CALENDAR_CLIENT_ID</code> and <code>GOOGLE_CALENDAR_CLIENT_SECRET</code> for direct Google Calendar sync.
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                      <span style={{ fontWeight: 600, color: "#0f172a" }}>WhatsApp Meta Cloud API:</span>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Set <code>WHATSAPP_TOKEN</code> and <code>WHATSAPP_PHONE_NUMBER_ID</code> to deliver real SMS/WhatsApp messages via Meta Graph API.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB: Email Console */}
+            {activeCommsSubTab === "email" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>✉️ Send Transactional Email</div>
+                  <form onSubmit={handleSendTestEmail}>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Recipient Email:</label>
+                      <input
+                        type="email"
+                        value={testEmailTo}
+                        onChange={(e) => setTestEmailTo(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Subject:</label>
+                      <input
+                        type="text"
+                        value={testEmailSub}
+                        onChange={(e) => setTestEmailSub(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Message Content:</label>
+                      <textarea
+                        value={testEmailMsg}
+                        onChange={(e) => setTestEmailMsg(e.target.value)}
+                        rows={4}
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ width: "100%", textAlign: "center" }}>
+                      Dispatch Email
+                    </button>
+                  </form>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>📋 Dispatched Email Audit Log</div>
+                  {emailHistory.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", padding: "30px 0" }}>
+                      No emails dispatched yet in this runtime session.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+                      {emailHistory.map((em, idx) => (
+                        <div key={idx} style={{ padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <strong style={{ fontSize: 13, color: "#0f172a" }}>{em.subject}</strong>
+                            <span className={`badge ${em.status === "sent" ? "badge-success" : "badge-info"}`} style={{ fontSize: 10 }}>
+                              {em.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "#2563eb", marginTop: 4 }}>To: {em.recipient}</div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{em.summary || em.message}</div>
+                          <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 6 }}>
+                            {new Date(em.timestamp).toLocaleString()} · ID: {em.id}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUB-TAB: Calendar Feed */}
+            {activeCommsSubTab === "calendar" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                  <div style={{ fontWeight: 700, fontSize: 16 }}>Scheduled Operations Events &amp; Room Tours</div>
+                  <button onClick={handleScheduleTestCalendar} className="btn-primary" style={{ fontSize: 12 }}>
+                    + Book New Event (.ics)
+                  </button>
+                </div>
+
+                {calendarEvents.length === 0 ? (
+                  <div className="card" style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
+                    No events scheduled yet. Run the 15-Day Move-Out workflow or click &quot;+ Book New Event&quot; above.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 14 }}>
+                    {calendarEvents.map((ev, idx) => (
+                      <div key={idx} className="card" style={{ marginTop: 0, padding: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>{ev.title}</span>
+                          <span className="badge badge-success" style={{ fontSize: 10 }}>
+                            {ev.status}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "#2563eb", marginTop: 6 }}>
+                          👤 {ev.attendee_name} ({ev.attendee_email})
+                        </div>
+                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                          📍 {ev.location} · ⏱️ {ev.duration_minutes} mins
+                        </div>
+                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+                          Start: {new Date(ev.start_time).toLocaleString()}
+                        </div>
+                        {ev.ics_data && (
+                          <button
+                            onClick={() => {
+                              const blob = new Blob([ev.ics_data], { type: "text/calendar" });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement("a");
+                              a.href = url;
+                              a.download = `${ev.id || "calendar_event"}.ics`;
+                              a.click();
+                            }}
+                            className="btn-secondary"
+                            style={{ marginTop: 12, width: "100%", textAlign: "center", fontSize: 11, padding: "5px 10px" }}
+                          >
+                            ⬇ Download RFC 5545 .ics File
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* SUB-TAB: WhatsApp Simulator */}
+            {activeCommsSubTab === "whatsapp" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1.5fr", gap: 16 }}>
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>💬 WhatsApp Dispatch Simulator</div>
+                  <form onSubmit={handleSendTestWhatsApp}>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                        Recipient Phone (E.164 auto-normalized):
+                      </label>
+                      <input
+                        type="text"
+                        value={testWaPhone}
+                        onChange={(e) => setTestWaPhone(e.target.value)}
+                        placeholder="e.g. 9876543210 or +919876543210"
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Message Content:</label>
+                      <textarea
+                        value={testWaMsg}
+                        onChange={(e) => setTestWaMsg(e.target.value)}
+                        rows={4}
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="btn-primary" style={{ width: "100%", textAlign: "center" }}>
+                      Send WhatsApp Message
+                    </button>
+                  </form>
+                </div>
+
+                <div className="card" style={{ marginTop: 0, padding: 20 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12 }}>📱 WhatsApp Resident Inbox (Simulator Feed)</div>
+                  {whatsappLogs.length === 0 ? (
+                    <div style={{ color: "#94a3b8", fontSize: 13, textAlign: "center", padding: "30px 0" }}>
+                      No WhatsApp messages logged yet. Run Move-Out workflow or dispatch a test message.
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+                      {whatsappLogs.map((msg, idx) => (
+                        <div
+                          key={idx}
+                          style={{
+                            padding: 12,
+                            background: "#f0fdf4",
+                            border: "1px solid #bbf7d0",
+                            borderRadius: 10,
+                            position: "relative",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "#166534" }}>
+                              StayOps Operations ➜ {msg.recipient_phone}
+                            </span>
+                            <span className="badge badge-success" style={{ fontSize: 9 }}>
+                              {msg.status}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 13, color: "#1e293b", lineHeight: 1.4, margin: "4px 0" }}>
+                            {msg.preview_text}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4 }}>
+                            Template: <code>{msg.template}</code> · {new Date(msg.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         </div>
       </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Pay Rent */}
+      {/* ------------------------------------------------------------- */}
+      {modalType === "pay_rent" && selectedRentRecord && (
+        <div className="modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18 }}>Record Resident Payment</h3>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+              Simulates verified rent payment receipt against {selectedRentRecord.tenant_name}&apos;s billing notice.
+            </div>
+
+            {modalError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{modalError}</div>}
+
+            <form onSubmit={handlePayRentSubmit}>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Amount to Record (₹):</label>
+                <input
+                  type="number"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(Number(e.target.value))}
+                  max={selectedRentRecord.balance_remaining}
+                  min={1}
+                  required
+                />
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Payment Channel:</label>
+                <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                  <option value="UPI">UPI (Google Pay / PhonePe)</option>
+                  <option value="Bank Transfer">NEFT / RTGS Bank Transfer</option>
+                  <option value="Card">Debit / Credit Card</option>
+                  <option value="Cash">Cash at Reception</option>
+                </select>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setModalType(null)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={modalSubmitting} className="btn-primary">
+                  {modalSubmitting ? "Recording..." : "Record Payment Receipt"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Add Property */}
+      {/* ------------------------------------------------------------- */}
+      {modalType === "add_property" && (
+        <div className="modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18 }}>Add Managed PG Property</h3>
+            {modalError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{modalError}</div>}
+            <form onSubmit={handleCreateProperty}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Property Name:</label>
+                <input
+                  type="text"
+                  value={newProperty.name}
+                  onChange={(e) => setNewProperty({ ...newProperty, name: e.target.value })}
+                  placeholder="e.g. StayOps Residency - HSR Layout"
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Property Code:</label>
+                <input
+                  type="text"
+                  value={newProperty.code}
+                  onChange={(e) => setNewProperty({ ...newProperty, code: e.target.value })}
+                  placeholder="e.g. SO-BLR-HSR"
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Address:</label>
+                <input
+                  type="text"
+                  value={newProperty.address}
+                  onChange={(e) => setNewProperty({ ...newProperty, address: e.target.value })}
+                  placeholder="Sector 2, HSR Layout"
+                  required
+                />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>City:</label>
+                  <input
+                    type="text"
+                    value={newProperty.city}
+                    onChange={(e) => setNewProperty({ ...newProperty, city: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Total Floors:</label>
+                  <input
+                    type="number"
+                    value={newProperty.total_floors}
+                    onChange={(e) => setNewProperty({ ...newProperty, total_floors: Number(e.target.value) })}
+                    min={1}
+                    required
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setModalType(null)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={modalSubmitting} className="btn-primary">
+                  {modalSubmitting ? "Creating..." : "Save Property"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Add Room */}
+      {/* ------------------------------------------------------------- */}
+      {modalType === "add_room" && (
+        <div className="modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18 }}>Add Room to Property</h3>
+            {modalError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{modalError}</div>}
+            <form onSubmit={handleCreateRoom}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Target Property:</label>
+                <select
+                  value={newRoom.property_id}
+                  onChange={(e) => setNewRoom({ ...newRoom, property_id: e.target.value })}
+                  required
+                >
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Room Number:</label>
+                  <input
+                    type="text"
+                    value={newRoom.room_number}
+                    onChange={(e) => setNewRoom({ ...newRoom, room_number: e.target.value })}
+                    placeholder="e.g. 202"
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Floor Number:</label>
+                  <input
+                    type="number"
+                    value={newRoom.floor_number}
+                    onChange={(e) => setNewRoom({ ...newRoom, floor_number: Number(e.target.value) })}
+                    min={0}
+                    required
+                  />
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Room Type:</label>
+                  <select
+                    value={newRoom.room_type}
+                    onChange={(e) => setNewRoom({ ...newRoom, room_type: e.target.value })}
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Double">Double</option>
+                    <option value="Triple">Triple</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Monthly Rent (₹):</label>
+                  <input
+                    type="number"
+                    value={newRoom.base_rent}
+                    onChange={(e) => setNewRoom({ ...newRoom, base_rent: Number(e.target.value) })}
+                    min={1000}
+                    required
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setModalType(null)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={modalSubmitting} className="btn-primary">
+                  {modalSubmitting ? "Creating..." : "Save Room &amp; Bed"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Add Tenant & Lease (Includes Explicit Property Selection) */}
+      {/* ------------------------------------------------------------- */}
+      {modalType === "add_tenant" && (
+        <div className="modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 4px 0", fontSize: 18, fontWeight: 700 }}>Register Resident &amp; Allocate Lease</h3>
+            <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16 }}>
+              Select a managed property, assign an available bed, and create the lease agreement.
+            </div>
+            {modalError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{modalError}</div>}
+            <form onSubmit={handleCreateTenantLease}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Full Name:</label>
+                <input
+                  type="text"
+                  value={newTenantForm.full_name}
+                  onChange={(e) => setNewTenantForm({ ...newTenantForm, full_name: e.target.value })}
+                  placeholder="e.g. Priya Sundaram"
+                  required
+                />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Email Address: <span style={{ fontSize: 11, color: "#16a34a" }}>✓ Verified format</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={newTenantForm.email}
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, email: e.target.value })}
+                    placeholder="priya@example.com"
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                    Phone Number: <span style={{ fontSize: 11, color: "#16a34a" }}>✓ 10-digit mobile</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={newTenantForm.phone}
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, phone: e.target.value })}
+                    placeholder="+91 98765 43210"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* 1. Property Selector (All properties appear here immediately) */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                  Select Property:
+                </label>
+                <select
+                  value={newTenantForm.property_id}
+                  onChange={(e) => {
+                    const pid = e.target.value;
+                    const propRooms = rooms.filter((r) => r.property_id === pid);
+                    const availBed = propRooms.flatMap((r) => (r.beds || []).filter((b: any) => b.status === "available"))[0];
+                    setNewTenantForm({
+                      ...newTenantForm,
+                      property_id: pid,
+                      bed_id: availBed ? availBed.id : "",
+                      monthly_rent: availBed ? availBed.rent : newTenantForm.monthly_rent,
+                      security_deposit: availBed ? availBed.rent * 2 : newTenantForm.security_deposit,
+                    });
+                  }}
+                  required
+                >
+                  <option value="">-- Choose Managed Property --</option>
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.city}) · {p.available_beds || 0} Available Beds
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Bed Selector filtered by chosen property */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                  Assign Available Bed:
+                </label>
+                {(() => {
+                  const targetRooms = rooms.filter(
+                    (r) => !newTenantForm.property_id || r.property_id === newTenantForm.property_id
+                  );
+                  const availableBeds = targetRooms.flatMap((r) =>
+                    (r.beds || [])
+                      .filter((b: any) => b.status === "available")
+                      .map((b: any) => ({
+                        ...b,
+                        room_number: r.room_number,
+                        property_name: r.property_name,
+                        property_id: r.property_id,
+                      }))
+                  );
+
+                  if (availableBeds.length === 0) {
+                    return (
+                      <div
+                        style={{
+                          background: "#fffbeb",
+                          border: "1px solid #fde68a",
+                          padding: "12px 14px",
+                          borderRadius: 8,
+                          fontSize: 13,
+                          color: "#92400e",
+                        }}
+                      >
+                        <div>⚠️ No vacant beds found for this property currently.</div>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!newTenantForm.property_id) {
+                              setModalError("Please select a property first.");
+                              return;
+                            }
+                            try {
+                              const rRes = await fetch(`${API_URL}/api/rooms`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  property_id: newTenantForm.property_id,
+                                  room_number: `10${Math.floor(Math.random() * 90 + 10)}`,
+                                  floor_number: 1,
+                                  room_type: "Double",
+                                  base_rent: 11000,
+                                }),
+                              });
+                              const rData = await rRes.json();
+                              if (rRes.ok && rData.id) {
+                                const bRes = await fetch(`${API_URL}/api/rooms/${rData.id}/beds`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ bed_label: "A", status: "available", monthly_rent: 11000 }),
+                                });
+                                const bData = await bRes.json();
+                                await fetchData();
+                                if (bRes.ok && bData.id) {
+                                  setNewTenantForm((prev) => ({
+                                    ...prev,
+                                    bed_id: bData.id,
+                                    monthly_rent: 11000,
+                                    security_deposit: 22000,
+                                  }));
+                                }
+                              }
+                            } catch (err: any) {
+                              setModalError(err.message || "Failed to auto-create room and bed.");
+                            }
+                          }}
+                          className="btn-secondary"
+                          style={{
+                            marginTop: 8,
+                            fontSize: 12,
+                            padding: "6px 12px",
+                            borderColor: "#f59e0b",
+                            color: "#b45309",
+                            background: "#ffffff",
+                          }}
+                        >
+                          + Quick-Provision Room &amp; Available Bed for this Property
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <select
+                      value={newTenantForm.bed_id}
+                      onChange={(e) => {
+                        const bid = e.target.value;
+                        const matched = availableBeds.find((b) => b.id === bid);
+                        setNewTenantForm({
+                          ...newTenantForm,
+                          bed_id: bid,
+                          property_id: matched ? matched.property_id : newTenantForm.property_id,
+                          monthly_rent: matched && matched.rent ? matched.rent : newTenantForm.monthly_rent,
+                          security_deposit: matched && matched.rent ? matched.rent * 2 : newTenantForm.security_deposit,
+                        });
+                      }}
+                      required
+                    >
+                      <option value="">-- Choose an Available Bed --</option>
+                      {availableBeds.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.property_name} · Room {b.room_number} · Bed {b.label} (₹{b.rent || b.monthly_rent}/mo)
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Monthly Rent (₹):</label>
+                  <input
+                    type="number"
+                    value={newTenantForm.monthly_rent}
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, monthly_rent: Number(e.target.value) })}
+                    min={1000}
+                    required
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Security Deposit (₹):</label>
+                  <input
+                    type="number"
+                    value={newTenantForm.security_deposit}
+                    onChange={(e) => setNewTenantForm({ ...newTenantForm, security_deposit: Number(e.target.value) })}
+                    min={0}
+                    required
+                  />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setModalType(null)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={modalSubmitting || !newTenantForm.bed_id} className="btn-primary">
+                  {modalSubmitting ? "Allocating..." : "Create Lease"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Create Ticket */}
+      {/* ------------------------------------------------------------- */}
+      {modalType === "create_ticket" && (
+        <div className="modal-backdrop" onClick={() => setModalType(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 18 }}>Submit Maintenance Ticket</h3>
+            {modalError && <div style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{modalError}</div>}
+            <form onSubmit={handleCreateTicket}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Property:</label>
+                <select
+                  value={newTicketForm.property_id}
+                  onChange={(e) => setNewTicketForm({ ...newTicketForm, property_id: e.target.value })}
+                  required
+                >
+                  {properties.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Issue Title:</label>
+                <input
+                  type="text"
+                  value={newTicketForm.title}
+                  onChange={(e) => setNewTicketForm({ ...newTicketForm, title: e.target.value })}
+                  placeholder="e.g. Geyser water not heating"
+                  required
+                />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Category:</label>
+                  <select
+                    value={newTicketForm.category}
+                    onChange={(e) => setNewTicketForm({ ...newTicketForm, category: e.target.value })}
+                  >
+                    <option value="Plumbing">Plumbing</option>
+                    <option value="Electrical">Electrical</option>
+                    <option value="Appliance">Appliance</option>
+                    <option value="Housekeeping">Housekeeping</option>
+                    <option value="Wi-Fi">Wi-Fi</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Severity:</label>
+                  <select
+                    value={newTicketForm.severity}
+                    onChange={(e) => setNewTicketForm({ ...newTicketForm, severity: e.target.value })}
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Emergency">Emergency</option>
+                  </select>
+                </div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontSize: 12, color: "#64748b", marginBottom: 4 }}>Description:</label>
+                <textarea
+                  value={newTicketForm.description}
+                  onChange={(e) => setNewTicketForm({ ...newTicketForm, description: e.target.value })}
+                  rows={3}
+                  placeholder="Describe location and symptoms..."
+                  required
+                />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" onClick={() => setModalType(null)} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" disabled={modalSubmitting} className="btn-primary">
+                  {modalSubmitting ? "Submitting..." : "Submit Ticket"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL: Sign In / Access Gate (Mandatory on Boot if No Session) */}
+      {/* ------------------------------------------------------------- */}
+      {authModalOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            // Only dismissable if user already has an active session
+            if (currentUser) setAuthModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-content"
+            style={{ maxWidth: 480, padding: 32 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <div style={{ marginBottom: 10 }}>
+                <StayOpsLogo size={52} />
+              </div>
+              <h2 style={{ margin: "0 0 6px 0", fontSize: 22, fontWeight: 800, color: "#0f172a" }}>
+                {authMode === "login"
+                  ? "Sign In to StayOps AI"
+                  : authStep === "otp"
+                  ? "Verify Email via OTP"
+                  : "Create StayOps Account"}
+              </h2>
+              <div style={{ fontSize: 13, color: "#64748b" }}>
+                {authMode === "login"
+                  ? "Smart PG & Co-Living Operations Platform"
+                  : authStep === "otp"
+                  ? "Enter the 6-digit authorization code dispatched to your email"
+                  : "Secure Registration with Email OTP Verification"}
+              </div>
+            </div>
+
+            {/* Registration Step Indicator */}
+            {authMode === "register" && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 20 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: authStep === "details" ? 700 : 500,
+                    color: authStep === "details" ? "#2563eb" : "#16a34a",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      background: authStep === "details" ? "#eff6ff" : "#dcfce7",
+                      border: `1.5px solid ${authStep === "details" ? "#2563eb" : "#16a34a"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {authStep === "otp" ? "✓" : "1"}
+                  </span>
+                  Details
+                </div>
+                <div style={{ width: 28, height: 2, background: authStep === "otp" ? "#16a34a" : "#e2e8f0", borderRadius: 1 }} />
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    fontWeight: authStep === "otp" ? 700 : 500,
+                    color: authStep === "otp" ? "#2563eb" : "#94a3b8",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: "50%",
+                      background: authStep === "otp" ? "#eff6ff" : "#f1f5f9",
+                      border: `1.5px solid ${authStep === "otp" ? "#2563eb" : "#cbd5e1"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 11,
+                      fontWeight: 700,
+                    }}
+                  >
+                    2
+                  </span>
+                  Verify OTP
+                </div>
+              </div>
+            )}
+
+            {authError && (
+              <div
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  color: "#dc2626",
+                  padding: "10px 14px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  marginBottom: 16,
+                }}
+              >
+                {authError}
+              </div>
+            )}
+
+            {/* Quick 1-Click Demo Logins */}
+            {authMode === "login" && (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
+                  Quick 1-Click Demo Login
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("property_manager")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 14px",
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#2563eb")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#e2e8f0")}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>👔 Property Manager</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>manager@stayops.ai</div>
+                    </div>
+                    <span className="badge" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" }}>
+                      Instant Access →
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("admin")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 14px",
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#7c3aed")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#e2e8f0")}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>🛡️ System Administrator</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>contact@sashankkarn.com.np</div>
+                    </div>
+                    <span className="badge" style={{ background: "#faf5ff", color: "#7c3aed", border: "1px solid #e9d5ff" }}>
+                      Instant Access →
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin("tenant")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 14px",
+                      background: "#f8fafc",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 8,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = "#16a34a")}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = "#e2e8f0")}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>🏠 Resident Tenant</div>
+                      <div style={{ fontSize: 12, color: "#64748b" }}>resident@stayops.ai</div>
+                    </div>
+                    <span className="badge" style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0" }}>
+                      Instant Access →
+                    </span>
+                  </button>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    margin: "20px 0 16px 0",
+                    color: "#94a3b8",
+                    fontSize: 12,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+                  <span style={{ padding: "0 10px" }}>Or sign in with email</span>
+                  <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+                </div>
+              </div>
+            )}
+
+            {authMode === "register" && authStep === "otp" ? (
+              <form onSubmit={handleAuthSubmit}>
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    marginBottom: 16,
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#166534", fontWeight: 700, marginBottom: 2 }}>
+                    📧 Verification Code Dispatched
+                  </div>
+                  <div style={{ fontSize: 12, color: "#15803d", lineHeight: 1.4 }}>
+                    We dispatched an authorization code to <strong>{authEmail}</strong>. Please enter the 6 digits below to complete your registration.
+                  </div>
+                </div>
+
+                {devOtp && (
+                  <div
+                    onClick={() => setAuthOtp(devOtp)}
+                    title="Click to auto-fill verification code"
+                    style={{
+                      background: "#eff6ff",
+                      border: "1.5px dashed #93c5fd",
+                      borderRadius: 8,
+                      padding: "10px 14px",
+                      marginBottom: 16,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: "#1e40af" }}>
+                      🔑 <strong>Dev/Demo OTP:</strong>{" "}
+                      <span style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 800, letterSpacing: 2, background: "#dbeafe", padding: "2px 6px", borderRadius: 4 }}>
+                        {devOtp}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 700 }}>Click to fill ↵</span>
+                  </div>
+                )}
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#475569", fontWeight: 600, marginBottom: 6 }}>
+                    Enter 6-Digit Verification Code:
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={authOtp}
+                    onChange={(e) => setAuthOtp(e.target.value.replace(/\D/g, ""))}
+                    placeholder="123456"
+                    style={{
+                      fontSize: 24,
+                      letterSpacing: "0.35em",
+                      textAlign: "center",
+                      fontFamily: "monospace",
+                      fontWeight: 700,
+                      padding: "12px",
+                      background: "#f8fafc",
+                      border: "2px solid #2563eb",
+                      borderRadius: 8,
+                      width: "100%",
+                      boxSizing: "border-box",
+                    }}
+                    autoFocus
+                    required
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => setAuthStep("details")}
+                      style={{ background: "transparent", border: "none", color: "#64748b", fontSize: 12, cursor: "pointer", padding: 0 }}
+                    >
+                      ← Back to edit info
+                    </button>
+                    <button
+                      type="button"
+                      disabled={otpCountdown > 0 || otpLoading}
+                      onClick={() => handleSendOtp()}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: otpCountdown > 0 ? "#94a3b8" : "#2563eb",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: otpCountdown > 0 ? "default" : "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      {otpLoading ? "Sending..." : otpCountdown > 0 ? `Resend in ${otpCountdown}s` : "Resend Code"}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
+                  <button type="button" onClick={() => setAuthStep("details")} className="btn-secondary">
+                    Back
+                  </button>
+                  <button type="submit" className="btn-primary" style={{ width: "100%" }}>
+                    ✓ Verify &amp; Complete Registration
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleAuthSubmit}>
+                {authMode === "register" && (
+                  <>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#475569", fontWeight: 600, marginBottom: 4 }}>Full Name:</label>
+                      <input
+                        type="text"
+                        value={authFullName}
+                        onChange={(e) => setAuthFullName(e.target.value)}
+                        placeholder="e.g. Sonal Sharma"
+                        required
+                      />
+                    </div>
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: "block", fontSize: 12, color: "#475569", fontWeight: 600, marginBottom: 4 }}>Role:</label>
+                      <select value={authRole} onChange={(e) => setAuthRole(e.target.value)}>
+                        <option value="property_manager">Property Manager</option>
+                        <option value="admin">System Administrator</option>
+                        <option value="tenant">Resident / Tenant</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#475569", fontWeight: 600, marginBottom: 4 }}>Email Address:</label>
+                  <input
+                    type="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder="manager@stayops.ai"
+                    required
+                  />
+                </div>
+
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ display: "block", fontSize: 12, color: "#475569", fontWeight: 600, marginBottom: 4 }}>Password:</label>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                  />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <button
+                    type="button"
+                    onClick={() => toggleAuthMode(authMode === "login" ? "register" : "login")}
+                    style={{ background: "transparent", border: "none", color: "#2563eb", fontSize: 13, fontWeight: 500, padding: 0, cursor: "pointer" }}
+                  >
+                    {authMode === "login" ? "Need an account? Register" : "Already registered? Sign In"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                  {currentUser && (
+                    <button type="button" onClick={() => setAuthModalOpen(false)} className="btn-secondary">
+                      Cancel
+                    </button>
+                  )}
+                  <button type="submit" className="btn-primary" style={{ width: currentUser ? "auto" : "100%" }} disabled={otpLoading}>
+                    {authMode === "login"
+                      ? "Sign In"
+                      : otpLoading
+                      ? "Sending Code..."
+                      : "Continue to Verify Email (OTP) →"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

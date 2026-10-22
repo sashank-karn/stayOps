@@ -20,7 +20,7 @@ def seed_users(db: Session) -> None:
         {"email": "contact@sashankkarn.com.np", "full_name": "Sashank Karn (Admin)", "role": "admin", "password": "Admin@123"},
         {"email": "admin@stayops.ai", "full_name": "Admin Director", "role": "admin", "password": "Admin@123"},
         {"email": "manager@stayops.ai", "full_name": "Rajesh Sharma (PM)", "role": "property_manager", "password": "Manager@123"},
-        {"email": "resident@stayops.ai", "full_name": "Rohan Verma (Resident)", "role": "tenant", "password": "Resident@123"},
+        {"email": "resident@stayops.ai", "full_name": "Rohan Mehta (Resident)", "role": "tenant", "password": "Resident@123"},
     ]
     for u in default_users:
         existing = db.query(User).filter(User.email == u["email"]).first()
@@ -123,10 +123,10 @@ def seed_database(db: Session | None = None) -> dict[str, Any]:
         # 3. Tenants & Leases
         today = date.today()
 
-        # Tenant 1: Rohan Mehta in 101-A (Will be used for 15-day move-out demonstration!)
+        # Tenant 1: Rohan Mehta in 101-A (Resident demo & 15-day move-out workflow)
         t1 = Tenant(
             full_name="Rohan Mehta",
-            email="rohan.mehta@example.com",
+            email="resident@stayops.ai",
             phone="+919811100001",
             emergency_contact="+919811199991",
             id_proof_type="Aadhaar",
