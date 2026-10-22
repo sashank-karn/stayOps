@@ -27,8 +27,8 @@ AGENT_NAME = "leasing"
 
 def match_rooms_for_lead(
     db: Session,
-    budget: float,
-    location: str,
+    budget: float = 20000.0,
+    location: Optional[str] = None,
     preferred_room_type: Optional[str] = None,
     limit: int = 5,
 ) -> List[dict[str, Any]]:
@@ -58,7 +58,7 @@ def match_rooms_for_lead(
     records = db.execute(stmt).all()
 
     candidates = []
-    loc_lower = location.strip().lower()
+    loc_lower = location.strip().lower() if location else ""
 
     for bed, room, prop in records:
         score = 0.0
@@ -66,12 +66,15 @@ def match_rooms_for_lead(
         # Location scoring (40 pts)
         prop_city = prop.city.lower()
         prop_addr = prop.address.lower()
-        if loc_lower in prop_city or loc_lower in prop_addr:
+        if not loc_lower:
+            score += 40.0
+        elif loc_lower in prop_city or loc_lower in prop_addr:
             score += 40.0
         elif any(part in prop_addr for part in loc_lower.split()):
             score += 25.0
         else:
             score += 10.0  # fallback across cities
+
 
         # Budget scoring (40 pts)
         rent = bed.monthly_rent

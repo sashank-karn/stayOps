@@ -65,6 +65,11 @@ def call_llm_with_attribution(
 
 def _generate_heuristic_response(prompt: str, system_prompt: Optional[str] = None) -> str:
     """Deterministic fallback engine when external AI provider is offline or unconfigured."""
+    if "Findings:" in prompt:
+        findings_part = prompt.split("Findings:", 1)[1].strip()
+        if findings_part:
+            return findings_part
+
     p_lower = prompt.lower()
 
     if any(w in p_lower for w in ["move out", "vacate", "checkout"]):
@@ -94,3 +99,4 @@ def _generate_heuristic_response(prompt: str, system_prompt: Optional[str] = Non
         f"Operational evaluation completed: The request was audited against StayOps PG policies, "
         f"safety compliance rules, and standard operating procedures."
     )
+

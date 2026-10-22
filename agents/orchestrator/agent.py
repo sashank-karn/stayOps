@@ -726,13 +726,13 @@ class OrchestratorAgent:
         if not chosen_agent:
             if any(k in p_lower for k in ["vacancy", "occupancy", "relist", "downtime", "loss", "empty"]):
                 chosen_agent = "vacancy_revenue"
-            elif any(k in p_lower for k in ["rent", "collect", "financial", "overdue", "late fee", "aging", "revenue"]):
+            elif any(k in p_lower for k in ["rent", "collect", "financial", "overdue", "late fee", "aging", "revenue", "cashflow"]):
                 chosen_agent = "collections"
-            elif any(k in p_lower for k in ["maintenance", "vendor", "plumb", "leak", "repair", "ticket", "contractor", "damage"]):
+            elif any(k in p_lower for k in ["maintenance", "vendor", "plumb", "leak", "repair", "ticket", "contractor", "damage", "broken"]):
                 chosen_agent = "maintenance"
-            elif any(k in p_lower for k in ["lead", "lease", "prospect", "visit", "inquiry", "tour", "book"]):
+            elif any(k in p_lower for k in ["lead", "lease", "prospect", "visit", "inquiry", "tour", "book", "room", "rooms", "flat", "bed", "find", "sharing", "pg"]):
                 chosen_agent = "leasing"
-            elif any(k in p_lower for k in ["tenant", "resident", "complaint", "noise", "support", "agreement"]):
+            elif any(k in p_lower for k in ["tenant", "resident", "complaint", "noise", "support", "agreement", "wifi", "wi-fi", "password", "curfew", "gate", "food", "mess", "meal", "clean", "rule"]):
                 chosen_agent = "tenant_support"
             elif any(k in p_lower for k in ["audit", "diagnostics", "health", "system", "all"]):
                 chosen_agent = "orchestrator"
@@ -839,23 +839,62 @@ class OrchestratorAgent:
         elif chosen_agent == "leasing":
             from backend.app.models.lead import Lead
             from backend.app.models.property import Bed
+            from agents.leasing.agent import match_rooms_for_lead
+            import re
+
+            budget = float(context.get("budget", 15000.0))
+            location = context.get("location") or context.get("city") or "Bengaluru"
+            room_type = context.get("room_type")
+
+            # Extract budget from prompt if mentioned
+            budget_match = re.search(r"(?:budget|under|below|around|rs\.?|₹|\$)\s*(\d{4,6})", p_lower)
+            if budget_match:
+                try:
+                    budget = float(budget_match.group(1))
+                except Exception:
+                    pass
+
+            for city in ["koramangala", "bengaluru", "bangalore", "pune", "viman nagar", "hsr", "indiranagar", "whitefield"]:
+                if city in p_lower:
+                    location = city.title()
+                    break
+
+            for r_type in ["single", "double", "triple"]:
+                if r_type in p_lower:
+                    room_type = r_type.title()
+                    break
+
+            matches = match_rooms_for_lead(self.db, budget=budget, location=location, preferred_room_type=room_type, limit=5)
             new_leads = self.db.query(Lead).filter(Lead.status.in_(["new", "contacted", "matched"])).count()
             avail_beds = self.db.query(Bed).filter(Bed.status == "available").count()
+
             result_data = {
                 "active_leads": new_leads,
                 "immediately_available_inventory": avail_beds,
+                "matched_rooms": matches,
+                "searched_location": location,
+                "searched_budget": budget,
             }
             elapsed = round((time.time() - t0) * 1000, 2)
-            response_text = (
-                f"Lead & Leasing Agent evaluated pipeline: {new_leads} prospective leads active, with "
-                f"{avail_beds} available beds ready for allocation. Automated match algorithm running."
-            )
+            if matches:
+                top = matches[0]
+                response_text = (
+                    f"Lead & Leasing Agent (Sonali Gupta): Found {len(matches)} matching option(s) in {location}! "
+                    f"Top pick: {top['property_name']}, Room {top['room_number']} ({top['room_type']}) at ₹{top['monthly_rent']:,.0f}/mo (Match Score: {top['match_score']}%). "
+                    f"You can choose and book this room directly from your resident portal."
+                )
+            else:
+                response_text = (
+                    f"Lead & Leasing Agent (Sonali Gupta): Currently {avail_beds} available bed(s) in active properties. "
+                    f"No direct matches found for ₹{budget:,.0f} in {location}. You can adjust your budget or target location in the portal to see all available beds."
+                )
+
             self._record_task(
                 workflow_id=wf.id,
                 sender=self.name,
                 receiver=self.leasing.name,
                 task_type="leasing_pipeline_review",
-                input_data={"prompt": prompt},
+                input_data={"prompt": prompt, "context": context},
                 output_data=result_data,
                 execution_time_ms=elapsed,
             )
@@ -875,16 +914,39 @@ class OrchestratorAgent:
                 "tenants_on_notice": notice_tenants,
             }
             elapsed = round((time.time() - t0) * 1000, 2)
-            response_text = (
-                f"Tenant Support Agent audited resident base: {active_tenants} active residents, "
-                f"{notice_tenants} currently on 15-day notice period. SLA response average is < 15 mins."
-            )
+
+            tenant_id = context.get("tenant_id")
+            email = context.get("email")
+            tenant_details = None
+            if tenant_id or email:
+                from agents.tenant_support.agent import get_active_tenant_details
+                tenant_details = get_active_tenant_details(self.db, str(tenant_id or email))
+
+            if tenant_details and tenant_details.get("room_number") != "N/A":
+                r_num = tenant_details.get("room_number")
+                prop_name = tenant_details.get("property_name")
+                if any(k in p_lower for k in ["wifi", "wi-fi", "password", "internet"]):
+                    response_text = f"Wi-Fi credentials for {prop_name}: Network is 'StayOps-TechPG-5G', Password is 'StayOpsTenant2026'."
+                elif any(k in p_lower for k in ["gate", "curfew", "timing", "lock"]):
+                    response_text = f"Main entrance gate is open 6:00 AM to 11:30 PM. For late entry, use your registered unit passcode."
+                elif any(k in p_lower for k in ["food", "mess", "meal", "dinner", "lunch", "breakfast"]):
+                    response_text = f"Dining schedule: Breakfast 7:30–9:30 AM, Lunch 12:30–2:30 PM, Dinner 8:00–10:00 PM in the dining hall."
+                elif any(k in p_lower for k in ["clean", "maid", "housekeeping"]):
+                    response_text = f"Housekeeping visits Room {r_num} daily between 10:00 AM and 1:00 PM."
+                else:
+                    response_text = f"StayOps Concierge for Room {r_num} ({prop_name}): Your request has been logged and shared with our facility management team."
+            else:
+                response_text = (
+                    f"Tenant Support Agent: You currently do not have an active room allocated. "
+                    f"Our Lead & Leasing Agent can help you find and allocate an ideal room based on your budget and location preferences."
+                )
+
             self._record_task(
                 workflow_id=wf.id,
                 sender=self.name,
                 receiver=self.tenant_support.name,
                 task_type="resident_health_audit",
-                input_data={"prompt": prompt},
+                input_data={"prompt": prompt, "context": context},
                 output_data=result_data,
                 execution_time_ms=elapsed,
             )
@@ -945,13 +1007,15 @@ class OrchestratorAgent:
             system_prompt="You are StayOps AI Executive Assistant. Summarize operational findings crisply for the property manager."
         )
 
+        final_display_text = response_text if (is_fallback or not llm_text) else llm_text
+
         # Step 6: Finalize workflow execution
         total_time_ms = round((time.time() - start_time) * 1000, 2)
         wf.status = "completed"
         wf.summary_result = {
             "primary_agent": chosen_agent,
             "response": response_text,
-            "llm_synthesis": llm_text,
+            "llm_synthesis": final_display_text,
             "llm_attribution": {"source": llm_source, "is_fallback": is_fallback},
             "execution_time_ms": total_time_ms,
             "facilitator_verification": fac_verification,
@@ -964,7 +1028,7 @@ class OrchestratorAgent:
             "primary_agent": chosen_agent,
             "executed_agents": executed_agents + [self.facilitator.name],
             "response": response_text,
-            "llm_synthesis": llm_text,
+            "llm_synthesis": final_display_text,
             "llm_attribution": {"source": llm_source, "is_fallback": is_fallback},
             "data": result_data,
             "execution_time_ms": total_time_ms,
