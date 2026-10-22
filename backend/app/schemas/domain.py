@@ -607,9 +607,11 @@ class CalendarScheduleRequest(BaseModel):
 
 
 class WhatsAppNotificationRequest(BaseModel):
-    recipient_phone: str = Field(..., min_length=10)
+    recipient_phone: Optional[str] = None
+    phone: Optional[str] = None
     template_name: str = "general_alert"
-    preview_text: str = Field(..., min_length=3)
+    preview_text: Optional[str] = None
+    message: Optional[str] = None
     parameters: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 

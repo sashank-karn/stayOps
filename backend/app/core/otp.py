@@ -76,29 +76,36 @@ def send_otp_email(email: str, otp_code: str, purpose: str = "registration") -> 
     """
 
     # Check for SMTP settings
-    smtp_host = getattr(settings, "smtp_host", None) or getattr(settings, "smtp_server", None)
-    smtp_user = getattr(settings, "smtp_user", None) or getattr(settings, "smtp_username", None)
-    smtp_pass = getattr(settings, "smtp_password", None)
-    smtp_port = int(getattr(settings, "smtp_port", 587))
+    smtp_host = (getattr(settings, "smtp_host", None) or getattr(settings, "smtp_server", None) or "").strip()
+    smtp_user = (getattr(settings, "smtp_user", None) or getattr(settings, "smtp_username", None) or "").strip()
+    smtp_pass = (getattr(settings, "smtp_password", None) or getattr(settings, "smtp_pass", None) or "").strip()
+    smtp_from = (getattr(settings, "smtp_from_email", None) or getattr(settings, "smtp_from", None) or "").strip()
+    smtp_port = int(getattr(settings, "smtp_port", 587) or 587)
 
     sent_via_smtp = False
     if smtp_host and smtp_user and smtp_pass:
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = getattr(settings, "smtp_from", f"StayOps Security <{smtp_user}>")
+            msg["From"] = smtp_from if smtp_from else f"StayOps Security <{smtp_user}>"
             msg["To"] = email
             msg.attach(MIMEText(text_body, "plain"))
             msg.attach(MIMEText(html_body, "html"))
 
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=8) as server:
-                server.starttls()
-                server.login(smtp_user, smtp_pass)
-                server.sendmail(msg["From"], [email], msg.as_string())
+            if smtp_port == 465:
+                with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(msg["From"], [email], msg.as_string())
+            else:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_pass)
+                    server.sendmail(msg["From"], [email], msg.as_string())
             sent_via_smtp = True
             logger.info("[StayOps Security] Successfully dispatched verification email via SMTP to %s", email)
         except Exception as e:
-            logger.warning("[StayOps Security] SMTP dispatch failed (%s), fallback to logged verification", e)
+            logger.warning("[StayOps Security] SMTP dispatch failed (%s), falling back to console dispatch", e)
+            print(f"[StayOps Security Warning] SMTP send failed: {e}")
 
     # Always log clearly for transparency, debugging, and local evaluation
     logger.info(

@@ -49,6 +49,32 @@ def is_whatsapp_configured() -> bool:
     return bool(token and phone_id)
 
 
+def parse_meta_error(err_content: Any) -> str:
+    """Parse Meta Graph API error response to return human-readable error."""
+    try:
+        if isinstance(err_content, bytes):
+            err_content = err_content.decode("utf-8")
+        if isinstance(err_content, str):
+            err_data = json.loads(err_content)
+        else:
+            err_data = err_content
+        err = err_data.get("error", {})
+        code = err.get("code")
+        msg = err.get("message", "")
+        details = err.get("error_data", {}).get("details", "")
+        if code == 131030:
+            return "Recipient phone number is not in your Meta Sandbox allowed list. Add it in Meta Developers -> WhatsApp -> API Setup -> Recipient list."
+        if code == 131047:
+            return "Meta 24-hour customer window is closed. Recipient must reply 'Hi' on WhatsApp before you can send custom messages."
+        if code == 190:
+            return "Meta WhatsApp Access Token has expired. Please refresh your temporary access token in Meta Developers."
+        if details:
+            return f"{msg} ({details})"
+        return msg or str(err_content)
+    except Exception:
+        return str(err_content)
+
+
 def send_whatsapp_message(
     recipient_phone: str,
     template_name: str,
@@ -112,7 +138,7 @@ def send_whatsapp_message(
                     status = "sent"
                     logger.info("[WhatsApp Service] Live message dispatched to %s (id: %s)", recipient_digits, external_msg_id)
             except urllib.error.HTTPError as http_err:
-                err_body = http_err.read().decode()
+                err_body = http_err.read().decode("utf-8")
                 # If freeform text was rejected (e.g. 24-hr customer service window), retry with template hello_world
                 if payload.get("type") == "text":
                     logger.info("[WhatsApp Service] Text rejected (%s); retrying with template 'hello_world'...", err_body)
@@ -133,16 +159,25 @@ def send_whatsapp_message(
                             "Content-Type": "application/json",
                         },
                     )
-                    with urllib.request.urlopen(retry_req, timeout=10) as retry_resp:
-                        retry_data = json.loads(retry_resp.read().decode())
-                        external_msg_id = retry_data.get("messages", [{}])[0].get("id")
-                        status = "sent"
-                        logger.info("[WhatsApp Service] Live template 'hello_world' dispatched to %s (id: %s)", recipient_digits, external_msg_id)
+                    try:
+                        with urllib.request.urlopen(retry_req, timeout=10) as retry_resp:
+                            retry_data = json.loads(retry_resp.read().decode("utf-8"))
+                            external_msg_id = retry_data.get("messages", [{}])[0].get("id")
+                            status = "sent"
+                            logger.info("[WhatsApp Service] Live template 'hello_world' dispatched to %s (id: %s)", recipient_digits, external_msg_id)
+                    except urllib.error.HTTPError as retry_err:
+                        retry_body = retry_err.read().decode("utf-8")
+                        status = "failed"
+                        error = parse_meta_error(retry_body)
+                        logger.error("[WhatsApp Service] Template retry failed: %s", error)
+                else:
+                    status = "failed"
+                    error = parse_meta_error(err_body)
+                    logger.error("[WhatsApp Service] Dispatch rejected by Meta: %s", error)
         except Exception as e:
-            # If Meta API rejected (e.g. unverified sandbox recipient 400), gracefully record as simulated preview
-            status = "simulated_preview" if "400" in str(e) else "failed"
+            status = "failed"
             error = str(e)
-            logger.warning("[WhatsApp Service] Dispatch failed (%s); saved to dev preview", e)
+            logger.warning("[WhatsApp Service] Dispatch failed (%s)", e)
     else:
         logger.info("[WhatsApp Service: Dev Preview] Dispatched to %s: '%s'", normalized_phone, preview_text[:60])
 
