@@ -84,9 +84,18 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sqlalchemy_url(self) -> str:
-        """Prefer an explicit DATABASE_URL; otherwise build one from the parts."""
+        """Prefer an explicit DATABASE_URL; otherwise build one from the parts.
+        Automatically normalizes standard 'postgres://' or 'postgresql://' prefixes
+        (commonly provided by Supabase, Neon, and Render) to 'postgresql+psycopg://'
+        for compatibility with the installed psycopg v3 driver.
+        """
         if self.database_url:
-            return self.database_url
+            url = self.database_url.strip()
+            if url.startswith("postgres://"):
+                url = "postgresql+psycopg://" + url[len("postgres://"):]
+            elif url.startswith("postgresql://"):
+                url = "postgresql+psycopg://" + url[len("postgresql://"):]
+            return url
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
