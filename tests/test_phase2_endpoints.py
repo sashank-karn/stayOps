@@ -74,8 +74,12 @@ class TestAuthenticationEndpoints:
         send_resp = client.post("/api/auth/send-otp", json={"email": email, "purpose": "registration"})
         assert send_resp.status_code == 200
         data = send_resp.json()
-        assert data["success"] is True
-        otp_code = data.get("dev_otp")
+        # In secure production mode, dev_otp is omitted from public response; query from DB
+        db = SessionLocal()
+        from backend.app.models.user import EmailVerificationCode
+        record = db.query(EmailVerificationCode).filter(EmailVerificationCode.email == email).order_by(EmailVerificationCode.created_at.desc()).first()
+        otp_code = record.code if record else None
+        db.close()
         assert otp_code is not None
         assert len(otp_code) == 6
 

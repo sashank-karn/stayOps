@@ -33,8 +33,24 @@ export default function LandingPage() {
   const [metrics, setMetrics] = useState<any>(null);
   const [integrations, setIntegrations] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [quickLoginLoading, setQuickLoginLoading] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<any>(null);
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("stayops_user");
+      if (stored) {
+        setLoggedInUser(JSON.parse(stored));
+      }
+    } catch {}
+  }, []);
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem("stayops_user");
+      localStorage.removeItem("stayops_token");
+    } catch {}
+    setLoggedInUser(null);
+  };
   useEffect(() => {
     async function loadStats() {
       try {
@@ -52,40 +68,6 @@ export default function LandingPage() {
     }
     loadStats();
   }, []);
-
-  const handleQuickDemoLaunch = async (role: "admin" | "property_manager" | "tenant") => {
-    setQuickLoginLoading(role);
-    let email = "manager@stayops.ai";
-    let password = "Manager@123";
-    if (role === "admin") {
-      email = "contact@sashankkarn.com.np";
-      password = "Admin@123";
-    } else if (role === "tenant") {
-      email = "resident@stayops.ai";
-      password = "Resident@123";
-    }
-
-    try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (res.ok && data.access_token) {
-        localStorage.setItem("stayops_user", JSON.stringify(data.user));
-        localStorage.setItem("stayops_token", data.access_token);
-        document.cookie = `stayops_token=${data.access_token}; path=/; max-age=86400`;
-        router.push("/dashboard");
-      } else {
-        router.push("/login");
-      }
-    } catch {
-      router.push("/login");
-    } finally {
-      setQuickLoginLoading(null);
-    }
-  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", color: "#0f172a", fontFamily: "'Inter', sans-serif" }}>
@@ -144,36 +126,92 @@ export default function LandingPage() {
           </a>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 8 }}>
-            <Link
-              href="/login"
-              style={{
-                color: "#2563eb",
-                background: "#f1f5f9",
-                padding: "8px 16px",
-                borderRadius: 8,
-                textDecoration: "none",
-                fontSize: 13,
-                fontWeight: 600,
-                border: "1px solid #cbd5e1",
-              }}
-            >
-              Sign In
-            </Link>
-            <Link
-              href="/dashboard"
-              style={{
-                background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
-                color: "#ffffff",
-                padding: "8px 18px",
-                borderRadius: 8,
-                textDecoration: "none",
-                fontSize: 13,
-                fontWeight: 700,
-                boxShadow: "0 4px 10px rgba(37, 99, 235, 0.2)",
-              }}
-            >
-              Open Dashboard →
-            </Link>
+            {loggedInUser ? (
+              <>
+                <Link
+                  href="/dashboard"
+                  style={{
+                    background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
+                    color: "#ffffff",
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    boxShadow: "0 4px 10px rgba(37, 99, 235, 0.2)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <span>⚡</span>
+                  <span>
+                    {loggedInUser.role === "admin"
+                      ? "Admin Console"
+                      : loggedInUser.role === "tenant"
+                      ? "Resident Hub"
+                      : "Manager Hub"}
+                  </span>
+                </Link>
+                <button
+                  onClick={handleLogout}
+                  title="Sign Out"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    background: "#ffffff",
+                    border: "1px solid #fee2e2",
+                    borderRadius: 8,
+                    padding: "7px 12px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#dc2626",
+                    cursor: "pointer",
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <polyline points="16 17 21 12 16 7"></polyline>
+                    <line x1="21" y1="12" x2="9" y2="12"></line>
+                  </svg>
+                  <span>Logout</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  style={{
+                    color: "#2563eb",
+                    background: "#f1f5f9",
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    border: "1px solid #cbd5e1",
+                  }}
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/dashboard"
+                  style={{
+                    background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
+                    color: "#ffffff",
+                    padding: "8px 18px",
+                    borderRadius: 8,
+                    textDecoration: "none",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    boxShadow: "0 4px 10px rgba(37, 99, 235, 0.2)",
+                  }}
+                >
+                  Open Dashboard →
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -238,11 +276,11 @@ export default function LandingPage() {
         {/* Primary Action Buttons */}
         <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap", marginBottom: 36 }}>
           <Link
-            href="/dashboard"
+            href="/login"
             style={{
               background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
               color: "#ffffff",
-              padding: "14px 28px",
+              padding: "14px 30px",
               borderRadius: 10,
               textDecoration: "none",
               fontSize: 15,
@@ -253,12 +291,12 @@ export default function LandingPage() {
               gap: 8,
             }}
           >
-            <span>Launch Operations Dashboard</span>
+            <span>Sign In to StayOps</span>
             <span>→</span>
           </Link>
 
-          <Link
-            href="/login"
+          <a
+            href="#architecture"
             style={{
               background: "#ffffff",
               color: "#0f172a",
@@ -269,88 +307,44 @@ export default function LandingPage() {
               fontWeight: 600,
               border: "1px solid #cbd5e1",
               boxShadow: "0 1px 3px rgba(0, 0, 0, 0.05)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
             }}
           >
-            Sign In / Register
-          </Link>
+            <span>Explore 7-Agent Architecture</span>
+            <span style={{ fontSize: 12 }}>↓</span>
+          </a>
         </div>
 
-        {/* Quick Demo Launch Bar */}
+        {/* Enterprise Security & Trust Ribbon */}
         <div
           style={{
             background: "#ffffff",
-            border: "1.5px dashed #cbd5e1",
+            border: "1px solid #e2e8f0",
             borderRadius: 14,
-            padding: "16px 20px",
-            maxWidth: 820,
+            padding: "16px 24px",
+            maxWidth: 860,
             margin: "0 auto",
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
+            justifyContent: "space-around",
             flexWrap: "wrap",
-            gap: 12,
+            gap: 16,
+            boxShadow: "0 2px 8px -2px rgba(15, 23, 42, 0.05)",
           }}
         >
-          <div style={{ textAlign: "left" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
-              ⚡ Quick Demo Instant Login:
-            </div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>
-              Click any role to auto-authenticate and enter the live workspace directly.
-            </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#334155", fontWeight: 600 }}>
+            <span style={{ color: "#16a34a", fontSize: 16 }}>🛡️</span> Enterprise Data Isolation
           </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              onClick={() => handleQuickDemoLaunch("admin")}
-              disabled={!!quickLoginLoading}
-              style={{
-                background: "#7c3aed",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {quickLoginLoading === "admin" ? "Launching..." : "🛡️ Admin (contact@sashankkarn.com.np)"}
-            </button>
-
-            <button
-              onClick={() => handleQuickDemoLaunch("property_manager")}
-              disabled={!!quickLoginLoading}
-              style={{
-                background: "#2563eb",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {quickLoginLoading === "property_manager" ? "Launching..." : "👔 Property Manager"}
-            </button>
-
-            <button
-              onClick={() => handleQuickDemoLaunch("tenant")}
-              disabled={!!quickLoginLoading}
-              style={{
-                background: "#16a34a",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: 8,
-                padding: "8px 14px",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              {quickLoginLoading === "tenant" ? "Launching..." : "🏠 Resident Portal"}
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#334155", fontWeight: 600 }}>
+            <span style={{ color: "#2563eb", fontSize: 16 }}>⚡</span> 7 Autonomous AI Agents
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#334155", fontWeight: 600 }}>
+            <span style={{ color: "#7c3aed", fontSize: 16 }}>📱</span> Meta WhatsApp Cloud API v25.0
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#334155", fontWeight: 600 }}>
+            <span style={{ color: "#f59e0b", fontSize: 16 }}>🔒</span> Human-in-the-Loop Safety Gates
           </div>
         </div>
       </section>
