@@ -10,7 +10,9 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: DATABASE_URL
-        value: sqlite:///./stayops.db
+        sync: false
+      - key: USE_N8N_ORCHESTRATOR
+        value: "false"
       - key: APP_ENV
         value: production
       - key: APP_NAME
