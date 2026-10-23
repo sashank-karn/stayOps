@@ -23,6 +23,7 @@ if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 else:
     # Cloud PostgreSQL / Supabase pooler resilience
+    connect_args.setdefault("connect_timeout", 5)
     engine_kwargs.update({
         "pool_size": 10,
         "max_overflow": 20,
