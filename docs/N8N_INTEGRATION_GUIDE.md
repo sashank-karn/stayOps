@@ -81,3 +81,11 @@ curl -X POST "http://localhost:5678/webhook/stayops-agent" \
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `STAYOPS_API_URL` | `http://localhost:8000` | The backend FastAPI endpoint URL |
+| `DB_TYPE` | `postgresdb` | Set to postgresdb for cloud persistence |
+| `DB_POSTGRESDB_HOST` | `aws-0-ap-south-1.pooler.supabase.com` | Supabase IPv4 Pooler host |
+| `DB_POSTGRESDB_PORT` | `5432` | PostgreSQL port |
+| `DB_POSTGRESDB_DATABASE` | `postgres` | Target database name |
+| `DB_POSTGRESDB_USER` | `postgres.<project_ref>` | Pooler username |
+| `DB_POSTGRESDB_PASSWORD` | `<db_password>` | Database password |
+| `DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED` | `false` | Required for cloud SSL connections |
+
