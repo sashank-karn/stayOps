@@ -1267,6 +1267,7 @@ class OrchestratorAgent:
                                 visit = v
                                 break
                     if not visit:
+                        # Check Lead table
                         lead = self.db.query(Lead).filter(Lead.full_name.ilike(f"%{target_person}%")).first()
                         if not lead and t_words:
                             for tw in t_words:
@@ -1278,6 +1279,7 @@ class OrchestratorAgent:
                             visit = self.db.query(PropertyVisit).filter(PropertyVisit.lead_id == lead.id).first()
 
                     if not visit:
+                        # If tour request for this specific person is not in local DB, create and confirm it
                         prop = self.db.query(Property).first()
                         if not lead:
                             lead = Lead(
@@ -1304,6 +1306,7 @@ class OrchestratorAgent:
                         self.db.commit()
                         self.db.refresh(visit)
                 else:
+                    # No specific person specified (e.g. prompt is simply "confirm tour")
                     if not visit:
                         visit = self.db.query(PropertyVisit).filter(PropertyVisit.status == "scheduled").order_by(PropertyVisit.created_at.desc()).first()
 
@@ -1359,8 +1362,151 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         # Action Category 5: Tenant & Lease Management
         # -------------------------------------------------------------
-        is_lease_action = any(k in p_lower for k in ["terminate lease", "cancel lease", "put on notice", "notice for tenant", "move out tenant"])
-        if is_lease_action:
+        is_create_lease = any(k in p_lower for k in [
+            "create lease", "new lease", "allocate bed", "allocate room",
+            "assign bed", "onboard tenant", "sign lease", "add tenant to room", "book bed"
+        ])
+        is_lease_notice = any(k in p_lower for k in [
+            "terminate lease", "cancel lease", "put on notice", "notice for tenant", "move out tenant"
+        ])
+
+        if is_create_lease:
+            # Extract name
+            name_m = re.search(r'(?:for|to|tenant|resident)\s+([a-zA-Z\s]+?)(?:\s+(?:in|at|room|rent|with|bed|on)|$)', prompt, re.IGNORECASE)
+            t_name = name_m.group(1).strip() if name_m else "Prospective Resident"
+            if t_name.lower() in ["a", "an", "the", "new", "lease", "room", "bed"]:
+                t_name = "New Resident"
+
+            # Extract rent
+            rent_m = re.search(r'(?:rent|amount|rs\.?|inr|₹)\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)', prompt, re.IGNORECASE)
+            if rent_m:
+                monthly_rent = float(rent_m.group(1).replace(",", ""))
+            else:
+                num_m = re.search(r'\b(\d{4,6})\b', prompt)
+                monthly_rent = float(num_m.group(1)) if num_m else 12000.0
+
+            # Extract room
+            room_m = re.search(r'room\s*(\d+[a-zA-Z]?)', p_lower)
+            target_room = None
+            if room_m:
+                r_code = room_m.group(1).upper()
+                target_room = self.db.query(Room).filter(Room.room_number.ilike(f"%{r_code}%")).first()
+
+            # Find or create Tenant
+            email_m = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
+            t_email = email_m.group(0).lower() if email_m else f"{t_name.lower().replace(' ', '.')}@example.com"
+            tenant = self.db.query(Tenant).filter(Tenant.email == t_email).first()
+            if not tenant:
+                tenant = self.db.query(Tenant).filter(Tenant.full_name.ilike(f"%{t_name}%")).first()
+            if not tenant:
+                tenant = Tenant(
+                    full_name=t_name.title(),
+                    email=t_email,
+                    phone="+91-9876543210",
+                    status="active",
+                )
+                self.db.add(tenant)
+                self.db.commit()
+                self.db.refresh(tenant)
+
+            # Find available bed
+            bed = None
+            if target_room:
+                bed = self.db.query(Bed).filter(Bed.room_id == target_room.id, Bed.status == "available").first()
+            if not bed:
+                bed = self.db.query(Bed).filter(Bed.status == "available").first()
+            if not bed:
+                bed = self.db.query(Bed).first()
+
+            room_obj = self.db.get(Room, bed.room_id) if bed and bed.room_id else None
+            prop_obj = self.db.get(Property, room_obj.property_id) if room_obj else self.db.query(Property).first()
+
+            if bed:
+                bed.status = "occupied"
+
+            # Create active lease
+            lease = Lease(
+                tenant_id=tenant.id,
+                bed_id=bed.id if bed else "bed-default",
+                start_date=date.today(),
+                end_date=date.today() + timedelta(days=180),
+                monthly_rent=monthly_rent,
+                security_deposit=monthly_rent * 2,
+                status="active",
+            )
+            self.db.add(lease)
+            self.db.commit()
+            self.db.refresh(lease)
+
+            # Create initial rent record for current month
+            curr_month = date.today().strftime("%Y-%m")
+            rent_rec = RentRecord(
+                lease_id=lease.id,
+                tenant_id=tenant.id,
+                billing_month=curr_month,
+                due_date=date.today() + timedelta(days=5),
+                amount_due=monthly_rent,
+                amount_paid=0.0,
+                status="pending",
+                days_overdue=0,
+            )
+            self.db.add(rent_rec)
+            self.db.commit()
+
+            bed_info = f"{bed.bed_label}" if bed and hasattr(bed, 'bed_label') else "Bed A"
+            room_info = f"Room {room_obj.room_number}" if room_obj else "Room 101"
+            prop_info = prop_obj.name if prop_obj else "StayOps PG"
+
+            resp_text = (
+                f"Lease agreement successfully created & activated! "
+                f"Resident '{tenant.full_name}' ({tenant.email}) allocated to {bed_info} in {room_info} at {prop_info}. "
+                f"Monthly Rent: ₹{monthly_rent:,.0f}, Security Deposit: ₹{monthly_rent * 2:,.0f}. "
+                f"Lease #{lease.id[:8].upper()} active for 6 months. Initial ledger entry logged for {curr_month}."
+            )
+            action_name = "create_lease_agreement"
+            action_data = {
+                "lease_id": lease.id,
+                "tenant_name": tenant.full_name,
+                "tenant_email": tenant.email,
+                "bed_id": bed.id if bed else None,
+                "room": room_info,
+                "monthly_rent": monthly_rent,
+                "status": "active",
+            }
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.leasing.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.leasing.name,
+                "executed_agents": [self.name, self.leasing.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.leasing.name,
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        if is_lease_notice:
             tenant = None
             email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
             if email_match:
@@ -1656,7 +1802,7 @@ class OrchestratorAgent:
             }
 
         # -------------------------------------------------------------
-        # Action Category 7: Entity Listings (Properties, Users, Tickets, Vendors)
+        # Action Category 8: Entity Listings & Pipeline Visibility
         # -------------------------------------------------------------
         is_list_props = any(k in p_lower for k in [
             "list the property", "list property", "list properties", "list the properties",
@@ -1675,8 +1821,27 @@ class OrchestratorAgent:
             "list vendor", "list vendors", "show vendors", "contractors",
             "view vendors", "who are the vendors", "all vendors"
         ])
+        is_list_tours = any(k in p_lower for k in [
+            "list tour", "list tours", "show tours", "pending visits", "property visits",
+            "scheduled tours", "all tours", "upcoming tours", "view tours", "our tours"
+        ])
+        is_list_tenants = any(k in p_lower for k in [
+            "list tenant", "list tenants", "show tenants", "show residents", "active tenants",
+            "our residents", "view tenants", "all tenants", "all residents", "list residents"
+        ])
+        is_list_approvals = any(k in p_lower for k in [
+            "list approval", "list approvals", "show approvals", "pending approvals",
+            "safety gates", "view approvals", "all approvals"
+        ])
+        is_list_vacant = any(k in p_lower for k in [
+            "vacant room", "vacant rooms", "available rooms", "empty rooms", "vacant beds",
+            "available beds", "available units", "empty beds", "show vacancies", "list vacancies"
+        ])
 
-        if is_list_props or is_list_users or is_list_tickets or is_list_vendors:
+        if (
+            is_list_props or is_list_users or is_list_tickets or is_list_vendors or
+            is_list_tours or is_list_tenants or is_list_approvals or is_list_vacant
+        ):
             if is_list_props:
                 props = self.db.query(Property).all()
                 prop_items = []
@@ -1736,6 +1901,63 @@ class OrchestratorAgent:
                 action_name = "list_tickets"
                 action_data = {"tickets": ticket_items, "count": len(tickets)}
                 primary_agent_name = self.maintenance.name
+
+            elif is_list_tours:
+                visits = self.db.query(PropertyVisit).order_by(PropertyVisit.scheduled_time.desc()).all()
+                tour_items = []
+                lines = [f"Found {len(visits)} property visit tours recorded:"]
+                for i, v in enumerate(visits[:8], 1):
+                    v_name = v.lead.full_name if v.lead else "Visitor"
+                    p_name = v.property.name if v.property else "Property"
+                    t_str = v.scheduled_time.strftime("%b %d, %I:%M %p") if v.scheduled_time else "TBD"
+                    lines.append(f"{i}. {v_name} @ {p_name} on {t_str} — Status: {v.status.upper()}")
+                    tour_items.append({"id": v.id, "visitor": v_name, "property": p_name, "time": t_str, "status": v.status})
+                resp_text = "\n".join(lines)
+                action_name = "list_tours"
+                action_data = {"tours": tour_items, "count": len(visits)}
+                primary_agent_name = self.leasing.name
+
+            elif is_list_tenants:
+                tenants = self.db.query(Tenant).filter(Tenant.status == "active").all()
+                tenant_items = []
+                lines = [f"Found {len(tenants)} active residents in StayOps:"]
+                for i, t in enumerate(tenants[:8], 1):
+                    lease = self.db.query(Lease).filter(Lease.tenant_id == t.id, Lease.status == "active").first()
+                    room_str = "Room Assigned" if lease else "Active Resident"
+                    lines.append(f"{i}. {t.full_name} ({t.email}, Phone: {t.phone}) — {room_str}")
+                    tenant_items.append({"id": t.id, "name": t.full_name, "email": t.email, "phone": t.phone})
+                resp_text = "\n".join(lines)
+                action_name = "list_tenants"
+                action_data = {"tenants": tenant_items, "count": len(tenants)}
+                primary_agent_name = self.tenant_support.name
+
+            elif is_list_approvals:
+                approvals = self.db.query(ApprovalRequest).order_by(ApprovalRequest.created_at.desc()).all()
+                app_items = []
+                lines = [f"Found {len(approvals)} safety gate approval requests:"]
+                for i, a in enumerate(approvals[:8], 1):
+                    lines.append(f"{i}. #{a.id[:8].upper()}: {a.action_type} (₹{a.estimated_cost:,.0f}) — Status: {a.status.upper()}")
+                    app_items.append({"id": a.id, "action_type": a.action_type, "cost": a.estimated_cost, "status": a.status})
+                resp_text = "\n".join(lines)
+                action_name = "list_approvals"
+                action_data = {"approvals": app_items, "count": len(approvals)}
+                primary_agent_name = self.facilitator.name
+
+            elif is_list_vacant:
+                available_beds = self.db.query(Bed).filter(Bed.status == "available").all()
+                vac_items = []
+                lines = [f"Found {len(available_beds)} vacant beds ready for occupancy:"]
+                for i, b in enumerate(available_beds[:8], 1):
+                    r = self.db.get(Room, b.room_id) if b.room_id else None
+                    p = self.db.get(Property, r.property_id) if r else None
+                    r_num = r.room_number if r else "101"
+                    p_name = p.name if p else "StayOps PG"
+                    lines.append(f"{i}. {b.bed_label} in Room {r_num} ({p_name}) — Status: AVAILABLE")
+                    vac_items.append({"bed_id": b.id, "bed_label": b.bed_label, "room": r_num, "property": p_name})
+                resp_text = "\n".join(lines)
+                action_name = "list_vacant_beds"
+                action_data = {"vacant_beds": vac_items, "count": len(available_beds)}
+                primary_agent_name = self.vacancy_revenue.name
 
             else:
                 vendors = self.db.query(Vendor).filter(Vendor.is_active == True).all()
