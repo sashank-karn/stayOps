@@ -228,7 +228,11 @@ export default function ManagerPortal() {
         body: JSON.stringify({
           prompt: q,
           target_agent: null,
-          context: { manager_user: currentUser?.email },
+          context: {
+            user_role: "property_manager",
+            manager_user: currentUser?.email,
+            email: currentUser?.email,
+          },
         }),
       });
       if (res.ok) {
@@ -245,7 +249,14 @@ export default function ManagerPortal() {
         const cRes = await fetch(`${API_URL}/api/agents/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: q }),
+          body: JSON.stringify({
+            message: q,
+            context: {
+              user_role: "property_manager",
+              manager_user: currentUser?.email,
+              email: currentUser?.email,
+            },
+          }),
         });
         if (cRes.ok) {
           const cData = await cRes.json();

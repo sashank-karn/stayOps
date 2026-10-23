@@ -421,7 +421,11 @@ export default function AdminPortal() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          context: { admin_email: currentUser?.email },
+          context: {
+            user_role: "admin",
+            admin_email: currentUser?.email,
+            email: currentUser?.email,
+          },
         }),
       });
 

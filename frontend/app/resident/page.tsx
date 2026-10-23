@@ -491,6 +491,8 @@ export default function ResidentPortal() {
           prompt: text,
           target_agent: hasActiveLease ? "tenant_support" : "leasing",
           context: {
+            user_role: "tenant",
+            role: "tenant",
             tenant_id: profile?.tenant?.id || currentUser?.id,
             email: currentUser?.email,
             location: searchLocation,
