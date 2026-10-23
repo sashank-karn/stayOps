@@ -2998,10 +2998,21 @@ class OrchestratorAgent:
         # Step 5: LLM attribution synthesis (Gemini or deterministic fallback)
         from shared.llm.client import call_llm_with_attribution
 
-        synthesis_prompt = f"Prompt: {prompt}\nAgent Executed: {chosen_agent}\nFindings: {response_text}"
+        synthesis_prompt = (
+            f"Manager Directive / Prompt: {prompt}\n"
+            f"Executed Agent Domain: {chosen_agent}\n"
+            f"Operational Telemetry & Findings: {response_text}\n"
+            f"Live System Data: {result_data}\n"
+            f"Please address the System Administrator / Property Manager directly with actionable operational intelligence."
+        )
         llm_text, llm_source, is_fallback = call_llm_with_attribution(
             prompt=synthesis_prompt,
-            system_prompt="You are StayOps AI Executive Assistant. Summarize operational findings crisply for the property manager."
+            system_prompt=(
+                "You are StayOps Executive AI Operations Assistant. The user commanding you is the System Administrator / Property Manager "
+                "with full administrative authority over all properties (StayOps TechPG in Koramangala Bengaluru, StayOps CampusLiving in Viman Nagar Pune), "
+                "rooms, beds, tenants, leases, financials, and safety gate approvals. "
+                "Act with high operational competence: understand natural language directives, report facts crisply, and provide professional executive answers."
+            )
         )
 
         final_display_text = response_text if (is_fallback or not llm_text) else llm_text
