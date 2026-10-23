@@ -78,6 +78,9 @@ from backend.app.schemas.domain import (
     CalendarScheduleRequest,
     WhatsAppNotificationRequest,
     IntegrationsStatusResponse,
+    PropertyVisitCreateRequest,
+    PropertyVisitStatusUpdateRequest,
+    PropertyVisitResponse,
 )
 from backend.app.services.email_service import send_email_notification, get_email_history
 from backend.app.services.calendar_service import schedule_calendar_event, get_calendar_events
@@ -140,13 +143,22 @@ def get_dashboard_metrics(db: Session = Depends(get_db)) -> dict[str, Any]:
 
 @router.get("/properties")
 def list_properties(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
-    """List all managed properties with room and bed counts."""
+    """List all managed properties with room, bed counts, and scheduled viewing request counts."""
     props = db.query(Property).filter(Property.is_deleted == False).all()
     results = []
     for p in props:
         total_rooms = len(p.rooms)
         total_beds = sum(len(r.beds) for r in p.rooms)
         available_beds = sum(sum(1 for b in r.beds if b.status == "available") for r in p.rooms)
+        pending_visits = db.query(PropertyVisit).filter(
+            PropertyVisit.property_id == p.id,
+            PropertyVisit.status.in_(["scheduled", "confirmed"]),
+            PropertyVisit.is_deleted == False,
+        ).count()
+        total_visits = db.query(PropertyVisit).filter(
+            PropertyVisit.property_id == p.id,
+            PropertyVisit.is_deleted == False,
+        ).count()
         results.append(
             {
                 "id": p.id,
@@ -160,6 +172,8 @@ def list_properties(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
                 "total_rooms": total_rooms,
                 "total_beds": total_beds,
                 "available_beds": available_beds,
+                "pending_visits": pending_visits,
+                "total_visits": total_visits,
             }
         )
     return results
@@ -190,6 +204,168 @@ def list_rooms(property_id: Optional[str] = None, db: Session = Depends(get_db))
             }
         )
     return results
+
+
+# -------------------------------------------------------------
+# Property Viewing & Tour Requests (Leasing / Resident)
+# -------------------------------------------------------------
+
+@router.get("/property-visits")
+def list_property_visits(
+    property_id: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> List[dict[str, Any]]:
+    """List scheduled and historical property viewing and tour requests."""
+    query = (
+        db.query(PropertyVisit, Lead, Property, Room)
+        .join(Lead, PropertyVisit.lead_id == Lead.id)
+        .join(Property, PropertyVisit.property_id == Property.id)
+        .outerjoin(Room, PropertyVisit.room_id == Room.id)
+        .filter(PropertyVisit.is_deleted == False)
+    )
+    if property_id:
+        query = query.filter(PropertyVisit.property_id == property_id)
+    if status:
+        query = query.filter(PropertyVisit.status == status)
+
+    query = query.order_by(desc(PropertyVisit.scheduled_time))
+    records = query.all()
+
+    results = []
+    for visit, lead, prop, room in records:
+        sched_iso = visit.scheduled_time.isoformat() if hasattr(visit.scheduled_time, "isoformat") else str(visit.scheduled_time)
+        created_iso = visit.created_at.isoformat() if hasattr(visit, "created_at") and visit.created_at else None
+        results.append({
+            "id": visit.id,
+            "lead_id": lead.id,
+            "lead_name": lead.full_name,
+            "email": lead.email or "",
+            "phone": lead.phone or "",
+            "property_id": prop.id,
+            "property_name": prop.name,
+            "property_code": prop.code,
+            "property_city": prop.city,
+            "room_id": room.id if room else None,
+            "room_number": room.room_number if room else None,
+            "scheduled_time": sched_iso,
+            "status": visit.status,
+            "feedback": visit.feedback or "",
+            "created_at": created_iso,
+        })
+    return results
+
+
+@router.get("/properties/{property_id}/visits")
+def list_property_specific_visits(
+    property_id: str,
+    db: Session = Depends(get_db),
+) -> List[dict[str, Any]]:
+    """Retrieve all tour and viewing requests for a specific property."""
+    return list_property_visits(property_id=property_id, status=None, db=db)
+
+
+@router.post("/property-visits")
+def create_property_visit_request(
+    payload: PropertyVisitCreateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Schedule a new property viewing or guided room tour request."""
+    from datetime import timedelta
+    from agents.leasing.agent import create_or_update_lead, schedule_property_visit
+    from backend.app.services.calendar_service import schedule_calendar_event
+
+    prop = db.get(Property, payload.property_id)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found.")
+
+    room = db.get(Room, payload.room_id) if payload.room_id else None
+
+    # Find or register lead
+    lead = create_or_update_lead(
+        db=db,
+        full_name=payload.lead_name.strip(),
+        phone=payload.phone.strip() if payload.phone else "+919876543210",
+        email=payload.email.strip().lower() if payload.email else None,
+        preferred_location=prop.city or "Bengaluru",
+        notes=payload.notes or "Tour requested via StayOps portal",
+    )
+
+    try:
+        clean_time = payload.scheduled_time.replace("Z", "+00:00")
+        sched_dt = datetime.fromisoformat(clean_time)
+        if not sched_dt.tzinfo:
+            sched_dt = sched_dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        sched_dt = datetime.now(timezone.utc) + timedelta(days=1, hours=4)
+
+    visit = schedule_property_visit(
+        db=db,
+        lead_id=lead.id,
+        property_id=prop.id,
+        scheduled_time=sched_dt,
+        room_id=room.id if room else None,
+        feedback=payload.notes,
+    )
+
+    # Schedule Google Calendar Event if integration active
+    try:
+        unit_label = f" (Room {room.room_number})" if room else ""
+        schedule_calendar_event(
+            event_type="property_visit",
+            title=f"Property Tour: {lead.full_name} at {prop.name}{unit_label}",
+            description=f"Guided accommodation tour requested by {lead.full_name} ({lead.email or lead.phone}). Notes: {payload.notes or 'None'}",
+            start_time=sched_dt.isoformat(),
+            duration_minutes=30,
+            location=f"{prop.name}, {prop.address or prop.city}",
+            attendee_name=lead.full_name,
+            attendee_email=lead.email or "lead@stayops.ai",
+        )
+    except Exception as e:
+        logger.warning("Auto calendar booking note: %s", e)
+
+    return {
+        "id": visit.id,
+        "lead_id": lead.id,
+        "lead_name": lead.full_name,
+        "email": lead.email or "",
+        "phone": lead.phone or "",
+        "property_id": prop.id,
+        "property_name": prop.name,
+        "property_code": prop.code,
+        "room_id": room.id if room else None,
+        "room_number": room.room_number if room else None,
+        "scheduled_time": visit.scheduled_time.isoformat() if hasattr(visit.scheduled_time, "isoformat") else str(visit.scheduled_time),
+        "status": visit.status,
+        "feedback": visit.feedback or "",
+        "message": f"Tour visit successfully scheduled for {sched_dt.strftime('%b %d, %Y at %I:%M %p')}.",
+    }
+
+
+@router.put("/property-visits/{visit_id}/status")
+def update_property_visit_status(
+    visit_id: str,
+    payload: PropertyVisitStatusUpdateRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Update property tour request status (confirmed, completed, cancelled, no_show)."""
+    visit = db.get(PropertyVisit, visit_id)
+    if not visit:
+        raise HTTPException(status_code=404, detail="Property visit not found.")
+
+    visit.status = payload.status
+    if payload.feedback:
+        visit.feedback = payload.feedback
+    db.commit()
+    db.refresh(visit)
+
+    return {
+        "id": visit.id,
+        "status": visit.status,
+        "feedback": visit.feedback,
+        "message": f"Visit status updated to {visit.status}.",
+    }
+
 
 
 # -------------------------------------------------------------

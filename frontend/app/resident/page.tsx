@@ -310,7 +310,22 @@ export default function ResidentPortal() {
     if (!selectedVisitTarget) return;
     setSchedulingVisit(true);
     try {
-      const res = await fetch(`${API_URL}/api/agents/dispatch`, {
+      const res = await fetch(`${API_URL}/api/property-visits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          property_id: selectedVisitTarget.property_id,
+          room_id: selectedVisitTarget.room_id || undefined,
+          lead_name: currentUser?.full_name || "Resident Tenant",
+          email: currentUser?.email || "resident@stayops.ai",
+          phone: currentUser?.phone || "+919876543210",
+          scheduled_time: visitTime,
+          notes: `Guided tour requested for Room ${selectedVisitTarget.room_number || "Vacant"} at ${selectedVisitTarget.property_name}`,
+        }),
+      });
+
+      // Also notify agent asynchronously
+      fetch(`${API_URL}/api/agents/dispatch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -324,7 +339,8 @@ export default function ResidentPortal() {
             scheduled_time: visitTime,
           },
         }),
-      });
+      }).catch(() => {});
+
       if (res.ok) {
         setVisitSuccessNotice(`Guided property tour successfully scheduled for ${new Date(visitTime).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}!`);
       } else {

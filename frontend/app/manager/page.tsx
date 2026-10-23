@@ -34,6 +34,9 @@ export default function ManagerPortal() {
   const [tenants, setTenants] = useState<any[]>([]);
   const [tickets, setTickets] = useState<any[]>([]);
   const [approvals, setApprovals] = useState<any[]>([]);
+  const [propertyVisits, setPropertyVisits] = useState<any[]>([]);
+  const [visitStatusFilter, setVisitStatusFilter] = useState<"all" | "pending" | "completed">("all");
+  const [updatingVisitId, setUpdatingVisitId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Modals
@@ -93,24 +96,47 @@ export default function ManagerPortal() {
   // Fetch operational data
   const loadData = useCallback(async () => {
     try {
-      const [mRes, pRes, tRes, tkRes, aRes] = await Promise.all([
+      const [mRes, pRes, tRes, tkRes, aRes, vRes] = await Promise.all([
         fetch(`${API_URL}/api/dashboard/metrics`).then((r) => (r.ok ? r.json() : null)),
         fetch(`${API_URL}/api/properties`).then((r) => (r.ok ? r.json() : [])),
         fetch(`${API_URL}/api/tenants`).then((r) => (r.ok ? r.json() : [])),
         fetch(`${API_URL}/api/tickets`).then((r) => (r.ok ? r.json() : [])),
         fetch(`${API_URL}/api/approvals`).then((r) => (r.ok ? r.json() : [])),
+        fetch(`${API_URL}/api/property-visits`).then((r) => (r.ok ? r.json() : [])),
       ]);
       setMetrics(mRes);
       setProperties(pRes);
       setTenants(tRes);
       setTickets(tkRes);
       setApprovals(aRes);
+      setPropertyVisits(vRes);
     } catch (err) {
       console.error("Failed to load operations data:", err);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleUpdateVisitStatus = async (visitId: string, newStatus: string) => {
+    setUpdatingVisitId(visitId);
+    try {
+      const res = await fetch(`${API_URL}/api/property-visits/${visitId}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (res.ok) {
+        setPropertyVisits((prev) =>
+          prev.map((v) => (v.id === visitId ? { ...v, status: newStatus } : v))
+        );
+        loadData();
+      }
+    } catch (err) {
+      console.error("Failed to update visit status:", err);
+    } finally {
+      setUpdatingVisitId(null);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -419,12 +445,17 @@ export default function ManagerPortal() {
             </div>
 
             {[
-              { id: "overview", label: "📊 Overview & KPIs", count: null },
-              { id: "properties", label: "🏢 Properties & Units", count: properties.length || 3 },
-              { id: "tenants", label: "👥 Residents & Leases", count: tenants.length || 28 },
-              { id: "ledger", label: "💳 Rent Ledger", count: null },
-              { id: "maintenance", label: "🔧 Maintenance & Vendors", count: tickets.length || 4 },
-              { id: "approvals", label: "🛡️ Safety Approvals", count: approvals.filter((a) => a.status === "pending").length || 3 },
+              { id: "overview", label: "📊 Overview & KPIs", count: null, alertCount: null },
+              {
+                id: "properties",
+                label: "🏢 Properties & Units",
+                count: properties.length || 3,
+                alertCount: propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length || null,
+              },
+              { id: "tenants", label: "👥 Residents & Leases", count: tenants.length || 28, alertCount: null },
+              { id: "ledger", label: "💳 Rent Ledger", count: null, alertCount: null },
+              { id: "maintenance", label: "🔧 Maintenance & Vendors", count: tickets.length || 4, alertCount: null },
+              { id: "approvals", label: "🛡️ Safety Approvals", count: approvals.filter((a) => a.status === "pending").length || 3, alertCount: null },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -446,20 +477,38 @@ export default function ManagerPortal() {
                 }}
               >
                 <span>{tab.label}</span>
-                {tab.count !== null && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      background: activeTab === tab.id ? "#bfdbfe" : "#f1f5f9",
-                      color: activeTab === tab.id ? "#1d4ed8" : "#64748b",
-                      padding: "2px 7px",
-                      borderRadius: 10,
-                    }}
-                  >
-                    {tab.count}
-                  </span>
-                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {tab.alertCount ? (
+                    <span
+                      title={`${tab.alertCount} tour viewing request(s) awaiting review`}
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: "#fef3c7",
+                        color: "#b45309",
+                        border: "1px solid #fde68a",
+                        padding: "1px 6px",
+                        borderRadius: 10,
+                      }}
+                    >
+                      {tab.alertCount} tours
+                    </span>
+                  ) : null}
+                  {tab.count !== null && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        background: activeTab === tab.id ? "#bfdbfe" : "#f1f5f9",
+                        color: activeTab === tab.id ? "#1d4ed8" : "#64748b",
+                        padding: "2px 7px",
+                        borderRadius: 10,
+                      }}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
           </nav>
@@ -631,6 +680,51 @@ export default function ManagerPortal() {
           {/* ---------------- OVERVIEW TAB ---------------- */}
           {activeTab === "overview" && (
             <div>
+              {/* Tour Requests Alert Banner */}
+              {propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length > 0 && (
+                <div
+                  style={{
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 12,
+                    padding: "14px 18px",
+                    marginBottom: 20,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 24 }}>📅</span>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: 14, color: "#166534" }}>
+                        {propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length} Prospective Tour &amp; Viewing Requests Awaiting Action
+                      </div>
+                      <div style={{ fontSize: 12, color: "#15803d", marginTop: 2 }}>
+                        Prospective residents and tenants have requested guided on-site walkthroughs for vacant rooms. Review slots and confirm tour dates.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("properties")}
+                    style={{
+                      background: "#16a34a",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "8px 16px",
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      boxShadow: "0 2px 4px rgba(22,163,74,0.25)",
+                    }}
+                  >
+                    View Tour Requests →
+                  </button>
+                </div>
+              )}
+
               {/* 5 KPI Metric Cards */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr)) PRIMARIES", gap: 16, marginBottom: 24, gridAutoFlow: "column" }}>
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
@@ -786,6 +880,363 @@ export default function ManagerPortal() {
           {/* ---------------- PROPERTIES TAB ---------------- */}
           {activeTab === "properties" && (
             <div>
+              {/* Tour & Viewing Requests Section */}
+              <div
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 14,
+                  padding: 22,
+                  marginBottom: 24,
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 10,
+                        background: "#eff6ff",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 20,
+                        color: "#2563eb",
+                      }}
+                    >
+                      📅
+                    </div>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                          Property Tour &amp; Viewing Requests
+                        </h2>
+                        {propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length > 0 && (
+                          <span
+                            style={{
+                              background: "#fef3c7",
+                              color: "#b45309",
+                              border: "1px solid #fde68a",
+                              padding: "2px 8px",
+                              borderRadius: 10,
+                              fontSize: 11,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length} Pending Review
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+                        Requests submitted by residents and prospective tenants wanting to view vacant rooms on-site.
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Filter tabs */}
+                  <div style={{ display: "flex", gap: 6, background: "#f1f5f9", padding: 3, borderRadius: 8 }}>
+                    {(["all", "pending", "completed"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setVisitStatusFilter(mode)}
+                        style={{
+                          background: visitStatusFilter === mode ? "#ffffff" : "transparent",
+                          color: visitStatusFilter === mode ? "#0f172a" : "#64748b",
+                          border: "none",
+                          padding: "5px 12px",
+                          borderRadius: 6,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          boxShadow: visitStatusFilter === mode ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
+                        }}
+                      >
+                        {mode === "all"
+                          ? `All (${propertyVisits.length})`
+                          : mode === "pending"
+                          ? `Pending (${propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length})`
+                          : `Completed (${propertyVisits.filter((v) => v.status === "completed" || v.status === "cancelled").length})`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Visits Cards */}
+                {(() => {
+                  const filteredVisits = propertyVisits.filter((v) => {
+                    if (visitStatusFilter === "pending") return v.status === "scheduled" || v.status === "confirmed";
+                    if (visitStatusFilter === "completed") return v.status === "completed" || v.status === "cancelled" || v.status === "no_show";
+                    return true;
+                  });
+
+                  if (filteredVisits.length === 0) {
+                    return (
+                      <div
+                        style={{
+                          background: "#f8fafc",
+                          border: "1px dashed #cbd5e1",
+                          borderRadius: 10,
+                          padding: "24px 16px",
+                          textAlign: "center",
+                          color: "#64748b",
+                          fontSize: 13,
+                        }}
+                      >
+                        No viewing tour requests found for this filter. When tenants click &quot;Schedule Visit&quot; from the resident portal, their requests will appear here automatically!
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {filteredVisits.map((v) => {
+                        const isPending = v.status === "scheduled" || v.status === "confirmed";
+                        const schedDate = new Date(v.scheduled_time);
+                        const dateFormatted = !isNaN(schedDate.getTime())
+                          ? schedDate.toLocaleString("en-US", {
+                              weekday: "short",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : v.scheduled_time;
+
+                        return (
+                          <div
+                            key={v.id}
+                            style={{
+                              background: isPending ? "#ffffff" : "#f8fafc",
+                              border: isPending ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
+                              borderRadius: 10,
+                              padding: "14px 16px",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              gap: 16,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                              <div
+                                style={{
+                                  width: 40,
+                                  height: 40,
+                                  borderRadius: 8,
+                                  background: isPending ? "#dbeafe" : "#f1f5f9",
+                                  color: isPending ? "#1d4ed8" : "#64748b",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontWeight: 800,
+                                  fontSize: 16,
+                                  flexShrink: 0,
+                                }}
+                              >
+                                <span>🗓️</span>
+                              </div>
+
+                              <div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <strong style={{ fontSize: 14, color: "#0f172a" }}>{v.lead_name}</strong>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: "#2563eb",
+                                      background: "#eff6ff",
+                                      border: "1px solid #dbeafe",
+                                      borderRadius: 6,
+                                      padding: "1px 8px",
+                                    }}
+                                  >
+                                    🏢 {v.property_name} {v.room_number ? `• Room ${v.room_number}` : ""}
+                                  </span>
+
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      borderRadius: 10,
+                                      padding: "1px 8px",
+                                      background:
+                                        v.status === "confirmed"
+                                          ? "#dcfce7"
+                                          : v.status === "completed"
+                                          ? "#f1f5f9"
+                                          : v.status === "cancelled"
+                                          ? "#fee2e2"
+                                          : "#fef3c7",
+                                      color:
+                                        v.status === "confirmed"
+                                          ? "#15803d"
+                                          : v.status === "completed"
+                                          ? "#475569"
+                                          : v.status === "cancelled"
+                                          ? "#b91c1c"
+                                          : "#b45309",
+                                      textTransform: "capitalize",
+                                    }}
+                                  >
+                                    ● {v.status}
+                                  </span>
+                                </div>
+
+                                <div style={{ fontSize: 12, color: "#475569", marginTop: 4, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                                  <span>
+                                    <strong>Slot:</strong> {dateFormatted}
+                                  </span>
+                                  {v.phone && (
+                                    <span>
+                                      <strong>Phone:</strong> {v.phone}
+                                    </span>
+                                  )}
+                                  {v.email && (
+                                    <span>
+                                      <strong>Email:</strong> {v.email}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {v.feedback && (
+                                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, fontStyle: "italic" }}>
+                                    Note: &quot;{v.feedback}&quot;
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              {v.phone && (
+                                <a
+                                  href={`https://wa.me/${v.phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                                    `Hi ${v.lead_name}, greetings from StayOps! Regarding your scheduled property tour of ${v.property_name} on ${dateFormatted}, our manager will meet you at the reception.`
+                                  )}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{
+                                    background: "#22c55e",
+                                    color: "#ffffff",
+                                    textDecoration: "none",
+                                    borderRadius: 6,
+                                    padding: "6px 10px",
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                  }}
+                                >
+                                  <span>💬 WhatsApp</span>
+                                </a>
+                              )}
+
+                              {v.status === "scheduled" && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateVisitStatus(v.id, "confirmed")}
+                                    disabled={updatingVisitId === v.id}
+                                    style={{
+                                      background: "#2563eb",
+                                      color: "#ffffff",
+                                      border: "none",
+                                      borderRadius: 6,
+                                      padding: "6px 12px",
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Confirm Tour
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateVisitStatus(v.id, "cancelled")}
+                                    disabled={updatingVisitId === v.id}
+                                    style={{
+                                      background: "#fef2f2",
+                                      color: "#b91c1c",
+                                      border: "1px solid #fee2e2",
+                                      borderRadius: 6,
+                                      padding: "6px 10px",
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Decline
+                                  </button>
+                                </>
+                              )}
+
+                              {v.status === "confirmed" && (
+                                <>
+                                  <button
+                                    onClick={() => handleUpdateVisitStatus(v.id, "completed")}
+                                    disabled={updatingVisitId === v.id}
+                                    style={{
+                                      background: "#16a34a",
+                                      color: "#ffffff",
+                                      border: "none",
+                                      borderRadius: 6,
+                                      padding: "6px 12px",
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    Mark Completed
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateVisitStatus(v.id, "no_show")}
+                                    disabled={updatingVisitId === v.id}
+                                    style={{
+                                      background: "#f1f5f9",
+                                      color: "#64748b",
+                                      border: "none",
+                                      borderRadius: 6,
+                                      padding: "6px 10px",
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      cursor: "pointer",
+                                    }}
+                                  >
+                                    No Show
+                                  </button>
+                                </>
+                              )}
+
+                              {(v.status === "completed" || v.status === "cancelled" || v.status === "no_show") && (
+                                <button
+                                  onClick={() => handleUpdateVisitStatus(v.id, "scheduled")}
+                                  disabled={updatingVisitId === v.id}
+                                  style={{
+                                    background: "#f1f5f9",
+                                    color: "#475569",
+                                    border: "1px solid #cbd5e1",
+                                    borderRadius: 6,
+                                    padding: "6px 10px",
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  Re-open
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Managed Properties Cards Header */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
                 <div>
                   <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
@@ -813,56 +1264,75 @@ export default function ManagerPortal() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
-                {properties.map((p) => (
-                  <div key={p.id} style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>{p.code || "PG-UNIT"} • {p.city || "Bengaluru"}</div>
-                        <h3 style={{ margin: "2px 0 0 0", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{p.name}</h3>
-                        <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{p.address || "Bengaluru / Pune"}</div>
-                      </div>
-                      <span style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
-                        Active
-                      </span>
-                    </div>
+                {properties.map((p) => {
+                  const propPendingVisits = propertyVisits.filter(
+                    (v) => v.property_id === p.id && (v.status === "scheduled" || v.status === "confirmed")
+                  ).length;
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "14px 0", fontSize: 12 }}>
-                      <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: 8, border: "1px solid #f1f5f9" }}>
-                        <span style={{ color: "#64748b", fontSize: 11 }}>Capacity:</span>
-                        <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{p.total_rooms || 12} Rooms</div>
-                        <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 600 }}>{p.total_beds || 34} Total Beds</div>
+                  return (
+                    <div key={p.id} style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#2563eb", textTransform: "uppercase" }}>{p.code || "PG-UNIT"} • {p.city || "Bengaluru"}</div>
+                          <h3 style={{ margin: "2px 0 0 0", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>{p.name}</h3>
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{p.address || "Bengaluru / Pune"}</div>
+                        </div>
+                        <span style={{ background: "#f0fdf4", color: "#16a34a", border: "1px solid #bbf7d0", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
+                          Active
+                        </span>
                       </div>
-                      <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: 8, border: "1px solid #f1f5f9" }}>
-                        <span style={{ color: "#64748b", fontSize: 11 }}>Availability:</span>
-                        <div style={{ fontWeight: 800, fontSize: 15, color: "#16a34a" }}>{p.available_beds ?? 5} Vacant</div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>₹14k–18k / mo</div>
-                      </div>
-                    </div>
 
-                    <button
-                      onClick={() => handleViewUnitsAndBeds(p)}
-                      style={{
-                        width: "100%",
-                        background: "#2563eb",
-                        color: "#ffffff",
-                        border: "none",
-                        borderRadius: 8,
-                        padding: "10px 14px",
-                        fontSize: 13,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                        boxShadow: "0 2px 4px rgba(37,99,235,0.2)",
-                      }}
-                    >
-                      <span>🏢</span>
-                      <span>View Units &amp; Beds ({p.name}) →</span>
-                    </button>
-                  </div>
-                ))}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, margin: "14px 0", fontSize: 12 }}>
+                        <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: 8, border: "1px solid #f1f5f9" }}>
+                          <span style={{ color: "#64748b", fontSize: 11 }}>Capacity:</span>
+                          <div style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{p.total_rooms || 12} Rooms</div>
+                          <div style={{ fontSize: 11, color: "#2563eb", fontWeight: 600 }}>{p.total_beds || 34} Total Beds</div>
+                        </div>
+                        <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: 8, border: "1px solid #f1f5f9" }}>
+                          <span style={{ color: "#64748b", fontSize: 11 }}>Availability:</span>
+                          <div style={{ fontWeight: 800, fontSize: 15, color: "#16a34a" }}>{p.available_beds ?? 5} Vacant</div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>₹14k–18k / mo</div>
+                        </div>
+                      </div>
+
+                      {/* Tour Requests Badge on Property Card */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, background: "#f8fafc", padding: "6px 10px", borderRadius: 6, border: "1px solid #f1f5f9" }}>
+                        <span style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>Viewing Requests:</span>
+                        {propPendingVisits > 0 ? (
+                          <span style={{ background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", padding: "1px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span>🔔</span>
+                            <span>{propPendingVisits} tour pending</span>
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: "#94a3b8" }}>0 pending</span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => handleViewUnitsAndBeds(p)}
+                        style={{
+                          width: "100%",
+                          background: "#2563eb",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: 8,
+                          padding: "10px 14px",
+                          fontSize: 13,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 6,
+                          boxShadow: "0 2px 4px rgba(37,99,235,0.2)",
+                        }}
+                      >
+                        <span>🏢</span>
+                        <span>View Units &amp; Beds ({p.name}) →</span>
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1323,6 +1793,39 @@ export default function ManagerPortal() {
                 </button>
               </div>
             </div>
+
+            {/* Active Property Viewing Tours Banner */}
+            {(() => {
+              const activeTours = propertyVisits.filter(
+                (v) => v.property_id === selectedPropertyUnits.id && (v.status === "scheduled" || v.status === "confirmed")
+              );
+              if (activeTours.length === 0) return null;
+              return (
+                <div
+                  style={{
+                    background: "#eff6ff",
+                    borderBottom: "1px solid #bfdbfe",
+                    padding: "10px 24px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    fontSize: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#1e40af" }}>
+                    <span style={{ fontSize: 16 }}>🔔</span>
+                    <strong>{activeTours.length} viewing tour request(s) for this property:</strong>
+                    <span>
+                      {activeTours.map((t) => `${t.lead_name} (${t.room_number ? 'Room ' + t.room_number : 'Site'}) on ${new Date(t.scheduled_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`).join(" | ")}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 11, background: "#dbeafe", color: "#1e40af", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>
+                    Active Tours
+                  </span>
+                </div>
+              );
+            })()}
 
             {/* Filter & Search Bar */}
             <div

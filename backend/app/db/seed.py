@@ -39,6 +39,52 @@ def seed_users(db: Session) -> None:
     db.commit()
 
 
+def ensure_property_visits_seeded(db: Session) -> None:
+    """Ensure realistic sample prospective tour / visit requests exist."""
+    if db.query(PropertyVisit).first():
+        return
+
+    prop = db.query(Property).first()
+    if not prop:
+        return
+
+    lead1 = db.query(Lead).filter(Lead.email == "kavya.nair@example.com").first() or db.query(Lead).first()
+    lead2 = db.query(Lead).filter(Lead.email == "arjun.varma@example.com").first()
+
+    room1 = db.query(Room).filter(Room.property_id == prop.id, Room.is_available == True).first()
+    if not room1:
+        room1 = db.query(Room).filter(Room.property_id == prop.id).first()
+
+    now_utc = datetime.now(timezone.utc)
+    visits_to_add = []
+
+    if lead1:
+        v1 = PropertyVisit(
+            lead_id=lead1.id,
+            property_id=prop.id,
+            room_id=room1.id if room1 else None,
+            scheduled_time=now_utc + timedelta(days=1, hours=3),
+            status="scheduled",
+            feedback="Prospective resident requested physical walkthrough of unit and dining mess facilities.",
+        )
+        visits_to_add.append(v1)
+
+    if lead2:
+        v2 = PropertyVisit(
+            lead_id=lead2.id,
+            property_id=prop.id,
+            room_id=room1.id if room1 else None,
+            scheduled_time=now_utc + timedelta(days=2, hours=6),
+            status="confirmed",
+            feedback="Scheduled guided tour for Double sharing room. Lead requested 1st floor preference.",
+        )
+        visits_to_add.append(v2)
+
+    if visits_to_add:
+        db.add_all(visits_to_add)
+        db.commit()
+
+
 def seed_database(db: Session | None = None) -> dict[str, Any]:
     """Seed comprehensive initial sample data into the database."""
     from typing import Any
@@ -57,7 +103,8 @@ def seed_database(db: Session | None = None) -> dict[str, Any]:
 
         # Check if properties already seeded
         if db.query(Property).first():
-            return {"status": "already_seeded", "users_seeded": True}
+            ensure_property_visits_seeded(db)
+            return {"status": "already_seeded", "users_seeded": True, "visits_seeded": True}
 
         # 1. Properties
         p1 = Property(

@@ -667,3 +667,40 @@ class IntegrationsStatusResponse(BaseModel):
     active_llm_provider: str
 
 
+# ---------------------------------------------------------
+# Property Viewing & Visit Requests
+# ---------------------------------------------------------
+
+class PropertyVisitCreateRequest(BaseModel):
+    property_id: str
+    room_id: Optional[str] = None
+    lead_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    scheduled_time: str
+    notes: Optional[str] = None
+
+
+class PropertyVisitStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="scheduled, confirmed, completed, cancelled, no_show")
+    feedback: Optional[str] = None
+
+
+class PropertyVisitResponse(BaseModel):
+    id: str
+    lead_id: str
+    lead_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    property_id: str
+    property_name: str
+    property_code: Optional[str] = None
+    room_id: Optional[str] = None
+    room_number: Optional[str] = None
+    scheduled_time: str
+    status: str
+    feedback: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+
