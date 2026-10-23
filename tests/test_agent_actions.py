@@ -283,6 +283,9 @@ def test_agent_viman_nagar_bed_allocation_and_safety_approvals(db_session):
     safety_res = orchestrator.dispatch_interactive_task("Check pending safety approvals")
     assert safety_res["action_performed"] == "list_approvals"
     assert "safety" in safety_res["response"].lower()
+    assert "llm_attribution" in safety_res
+    assert "llm_synthesis" in safety_res
+
 
 
 
