@@ -701,6 +701,45 @@ class OrchestratorAgent:
             },
         }
 
+    def _permission_denied_response(
+        self,
+        action_name: str,
+        wf: WorkflowExecution,
+        start_time: float,
+    ) -> dict[str, Any]:
+        """Return standardized permission-denied payload when a resident or unauthorized role attempts an admin operation."""
+        resp_text = (
+            f"Permission Denied: Resident/Tenant accounts are not authorized to perform administrative operations such as '{action_name}'. "
+            f"Please sign in with a Property Manager or Administrator account to execute this action."
+        )
+        total_time_ms = round((time.time() - start_time) * 1000, 2)
+        wf.status = "completed"
+        wf.summary_result = {
+            "action_performed": "permission_denied",
+            "response": resp_text,
+            "data": {"denied_action": action_name},
+            "execution_time_ms": total_time_ms,
+        }
+        self.db.commit()
+        return {
+            "workflow_id": wf.id,
+            "status": "completed",
+            "primary_agent": "facilitator",
+            "executed_agents": [self.name, self.facilitator.name],
+            "action_performed": "permission_denied",
+            "response": resp_text,
+            "llm_synthesis": resp_text,
+            "llm_attribution": {"source": "stayops_agent_permission_guard", "is_fallback": False},
+            "data": {"denied_action": action_name},
+            "execution_time_ms": total_time_ms,
+            "trace_steps": [{
+                "agent": "StayOps Guardian",
+                "action": "permission_denied",
+                "execution_time_ms": total_time_ms,
+                "summary": resp_text,
+            }],
+        }
+
     def _execute_operational_action(
         self,
         prompt: str,
@@ -709,136 +748,219 @@ class OrchestratorAgent:
         start_time: float,
     ) -> Optional[dict[str, Any]]:
         """Identify and execute state-mutating operational actions across user accounts,
-        maintenance tickets, vendor assignments, safety approvals, property visits, and resident leases.
+        properties, rooms, beds, maintenance tickets, vendor assignments, safety approvals,
+        property visits, and resident leases.
         Returns a completed response dictionary if an action was matched and executed, or None to fall back to analytical queries.
         """
         p_lower = prompt.lower().strip()
         t0 = time.time()
+        caller_role = (context.get("user_role") or context.get("role") or "").lower().strip()
 
         # -------------------------------------------------------------
-        # Action Category 1: User Account Operations (Activate, Deactivate, Role Update, Delete)
+        # Action Category 1: User Account Operations (Activate, Deactivate, Role Update, Create, Delete)
         # -------------------------------------------------------------
         is_user_mgmt = (
             any(k in p_lower for k in ["deactivate", "disable", "suspend", "inactivate", "block user", "turn off user"])
             or any(k in p_lower for k in ["activate", "enable", "unsuspend", "unblock", "restore user", "turn on user"])
             or any(k in p_lower for k in ["change role", "update role", "make user", "promote user", "demote user"])
             or any(k in p_lower for k in ["delete user", "remove user", "drop user", "delete account"])
+            or any(k in p_lower for k in ["create user", "add user", "register user", "new user account"])
         )
 
         if is_user_mgmt:
-            # Extract target user
-            target_user = None
-            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
-            if email_match:
-                target_user = self.db.query(User).filter(User.email == email_match.group(0).lower()).first()
+            # RBAC: Tenants cannot manage user accounts
+            if caller_role == "tenant":
+                return self._permission_denied_response("user_management", wf, start_time)
 
-            if not target_user:
-                uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
-                if uuid_match:
-                    target_user = self.db.get(User, uuid_match.group(0))
-
-            if not target_user and context:
-                c_target = context.get("target_user") or context.get("target_email") or context.get("user_id")
-                if c_target:
-                    target_user = self.db.query(User).filter((User.id == str(c_target)) | (User.email == str(c_target).lower())).first()
-
-            if not target_user:
-                # Check for explicit role mention (e.g. "deactivate resident user" / "deactivate tenant")
-                if "resident" in p_lower or "tenant" in p_lower:
-                    target_user = self.db.query(User).filter(User.role == "tenant").first()
+            # Handle Create User
+            if any(k in p_lower for k in ["create user", "add user", "register user", "new user account"]):
+                from backend.app.core.auth import hash_password
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
+                new_email = email_match.group(0).lower() if email_match else f"user_{int(time.time())}@stayops.ai"
+                
+                # Extract role
+                new_role = "tenant"
+                if "admin" in p_lower:
+                    new_role = "admin"
                 elif "manager" in p_lower:
-                    target_user = self.db.query(User).filter(User.role == "property_manager").first()
-                elif "admin" in p_lower:
-                    target_user = self.db.query(User).filter(User.role == "admin").first()
+                    new_role = "property_manager"
+
+                # Extract name
+                name_match = re.search(r'(?:user|named|name)\s+([a-zA-Z\s]+?)(?:\s+(?:email|with|role|as)|$)', prompt, re.IGNORECASE)
+                u_name = name_match.group(1).strip() if name_match else "New System User"
+                if u_name.lower() in ["a", "an", "the", "new", "account", "user"]:
+                    u_name = "New StayOps User"
+
+                existing = self.db.query(User).filter(User.email == new_email).first()
+                if existing:
+                    resp_text = f"User account with email '{new_email}' already exists in StayOps (Current Role: {existing.role}, Active: {existing.is_active})."
+                    action_name = "create_user_noop"
+                    action_data = {"user_id": existing.id, "email": existing.email}
                 else:
+                    new_user = User(
+                        email=new_email,
+                        hashed_password=hash_password("User@123"),
+                        full_name=u_name.title(),
+                        role=new_role,
+                        is_active=True,
+                        is_verified=True,
+                    )
+                    self.db.add(new_user)
+                    self.db.commit()
+                    self.db.refresh(new_user)
+                    resp_text = (
+                        f"User account '{new_user.email}' ({new_user.full_name}) successfully created with role '{new_user.role}'! "
+                        f"Initial login credentials generated and account marked active."
+                    )
+                    action_name = "create_user"
+                    action_data = {"user_id": new_user.id, "email": new_user.email, "role": new_user.role, "full_name": new_user.full_name}
+
+            else:
+                # Target user resolution
+                target_user = None
+                email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
+                if email_match:
+                    target_user = self.db.query(User).filter(User.email == email_match.group(0).lower()).first()
+
+                if not target_user:
+                    uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
+                    if uuid_match:
+                        target_user = self.db.get(User, uuid_match.group(0))
+
+                if not target_user and context:
+                    c_target = context.get("target_user") or context.get("target_email") or context.get("user_id")
+                    if c_target:
+                        target_user = self.db.query(User).filter((User.id == str(c_target)) | (User.email == str(c_target).lower())).first()
+
+                if not target_user:
                     all_u = self.db.query(User).all()
                     for u in all_u:
-                        if u.full_name and len(u.full_name.strip()) > 3 and u.full_name.lower() in p_lower:
+                        if not u.full_name:
+                            continue
+                        if u.full_name.lower() in p_lower:
+                            target_user = u
+                            break
+                        stop_words = {"resident", "tenant", "manager", "admin", "user", "the", "new", "account", "otp", "verified", "engineer", "test", "temporary"}
+                        parts = [p.lower().strip("(),") for p in u.full_name.split() if len(p.strip("(),")) >= 3 and p.lower() not in stop_words]
+                        if any(re.search(r'\b' + re.escape(part) + r'\b', p_lower) for part in parts):
                             target_user = u
                             break
 
-            # Handle Deactivate
-            if any(k in p_lower for k in ["deactivate", "disable", "suspend", "inactivate", "block user", "turn off user"]):
                 if not target_user:
-                    active_u = self.db.query(User).filter(User.is_active == True).limit(5).all()
-                    u_preview = ", ".join([f"{u.email} ({u.role})" for u in active_u])
-                    resp_text = (
-                        f"Which user account would you like to deactivate? Currently active accounts include: {u_preview}. "
-                        f"You can specify: 'Deactivate user <email>' (e.g. 'Deactivate user resident@stayops.ai')."
-                    )
-                    action_name = "prompt_target_user"
-                    action_data = {"active_accounts": [u.email for u in active_u]}
-                else:
-                    target_user.is_active = False
-                    self.db.commit()
-                    self.db.refresh(target_user)
-                    resp_text = (
-                        f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully deactivated. "
-                        f"Account login access and API credentials are now revoked."
-                    )
-                    action_name = "deactivate_user"
-                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": False}
+                    # Check Tenant table for name matching
+                    stop_words = {"resident", "tenant", "manager", "admin", "user", "the", "new", "account", "otp", "verified", "engineer", "test", "temporary"}
+                    for t in self.db.query(Tenant).all():
+                        if not t.full_name:
+                            continue
+                        parts = [p.lower().strip("(),") for p in t.full_name.split() if len(p.strip("(),")) >= 3 and p.lower() not in stop_words]
+                        if any(re.search(r'\b' + re.escape(part) + r'\b', p_lower) for part in parts):
+                            target_user = self.db.query(User).filter(User.email == t.email).first()
+                            if not target_user:
+                                from backend.app.core.auth import hash_password
+                                target_user = User(
+                                    email=t.email,
+                                    hashed_password=hash_password("User@123"),
+                                    full_name=t.full_name,
+                                    role="tenant",
+                                    is_active=True,
+                                    is_verified=True,
+                                )
+                                self.db.add(target_user)
+                                self.db.commit()
+                                self.db.refresh(target_user)
+                            break
 
-            # Handle Activate
-            elif any(k in p_lower for k in ["activate", "enable", "unsuspend", "unblock", "restore user", "turn on user"]):
                 if not target_user:
-                    inactive_u = self.db.query(User).filter(User.is_active == False).limit(5).all()
-                    if inactive_u:
-                        u_preview = ", ".join([f"{u.email} ({u.role})" for u in inactive_u])
-                        resp_text = f"Which user account would you like to activate? Deactivated accounts: {u_preview}. Please specify: 'Activate user <email>'."
-                    else:
-                        resp_text = "All user accounts in the platform are already active."
-                    action_name = "prompt_target_user"
-                    action_data = {"inactive_accounts": [u.email for u in inactive_u]}
-                else:
-                    target_user.is_active = True
-                    self.db.commit()
-                    self.db.refresh(target_user)
-                    resp_text = (
-                        f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully activated. "
-                        f"Account login access and operational privileges have been restored."
-                    )
-                    action_name = "activate_user"
-                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": True}
-
-            # Handle Role Change
-            elif any(k in p_lower for k in ["change role", "update role", "make user", "promote user", "demote user"]):
-                if not target_user:
-                    resp_text = "Please specify the user email and target role (admin, property_manager, or tenant), e.g., 'Change role of resident@stayops.ai to property_manager'."
-                    action_name = "prompt_target_user"
-                    action_data = {}
-                else:
-                    if "to admin" in p_lower or "as admin" in p_lower or p_lower.endswith("admin"):
-                        new_role = "admin"
-                    elif "to tenant" in p_lower or "as tenant" in p_lower or "to resident" in p_lower or "as resident" in p_lower or p_lower.endswith(("tenant", "resident")):
-                        new_role = "tenant"
-                    elif any(m in p_lower for m in ["manager", "property_manager"]):
-                        new_role = "property_manager"
+                    # Check for explicit role mention (e.g. "deactivate resident user" / "deactivate tenant")
+                    if "resident" in p_lower or "tenant" in p_lower:
+                        target_user = self.db.query(User).filter(User.role == "tenant").first()
+                    elif "manager" in p_lower:
+                        target_user = self.db.query(User).filter(User.role == "property_manager").first()
                     elif "admin" in p_lower:
-                        new_role = "admin"
+                        target_user = self.db.query(User).filter(User.role == "admin").first()
+
+                # Handle Deactivate
+                if any(k in p_lower for k in ["deactivate", "disable", "suspend", "inactivate", "block user", "turn off user"]):
+                    if not target_user:
+                        active_u = self.db.query(User).filter(User.is_active == True).limit(5).all()
+                        u_preview = ", ".join([f"{u.email} ({u.role})" for u in active_u])
+                        resp_text = (
+                            f"Which user account would you like to deactivate? Currently active accounts include: {u_preview}. "
+                            f"You can specify: 'Deactivate user <email>' (e.g. 'Deactivate user resident@stayops.ai')."
+                        )
+                        action_name = "prompt_target_user"
+                        action_data = {"active_accounts": [u.email for u in active_u]}
                     else:
-                        new_role = "property_manager"
+                        target_user.is_active = False
+                        self.db.commit()
+                        self.db.refresh(target_user)
+                        resp_text = (
+                            f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully deactivated. "
+                            f"Account login access and API credentials are now revoked."
+                        )
+                        action_name = "deactivate_user"
+                        action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": False}
 
-                    target_user.role = new_role
-                    self.db.commit()
-                    self.db.refresh(target_user)
-                    resp_text = f"User '{target_user.email}' ({target_user.full_name}) has been assigned role '{target_user.role}'."
-                    action_name = "update_user_role"
-                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role}
+                # Handle Activate
+                elif any(k in p_lower for k in ["activate", "enable", "unsuspend", "unblock", "restore user", "turn on user"]):
+                    if not target_user:
+                        inactive_u = self.db.query(User).filter(User.is_active == False).limit(5).all()
+                        if inactive_u:
+                            u_preview = ", ".join([f"{u.email} ({u.role})" for u in inactive_u])
+                            resp_text = f"Which user account would you like to activate? Deactivated accounts: {u_preview}. Please specify: 'Activate user <email>'."
+                        else:
+                            resp_text = "All user accounts in the platform are already active."
+                        action_name = "prompt_target_user"
+                        action_data = {"inactive_accounts": [u.email for u in inactive_u]}
+                    else:
+                        target_user.is_active = True
+                        self.db.commit()
+                        self.db.refresh(target_user)
+                        resp_text = (
+                            f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully activated. "
+                            f"Account login access and operational privileges have been restored."
+                        )
+                        action_name = "activate_user"
+                        action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": True}
 
-            # Handle Delete User
-            else:
-                if not target_user:
-                    resp_text = "Please specify the user email to delete, e.g., 'Delete user test@stayops.ai'."
-                    action_name = "prompt_target_user"
-                    action_data = {}
+                # Handle Role Change
+                elif any(k in p_lower for k in ["change role", "update role", "make user", "promote user", "demote user"]):
+                    if not target_user:
+                        resp_text = "Please specify the user email and target role (admin, property_manager, or tenant), e.g., 'Change role of resident@stayops.ai to property_manager'."
+                        action_name = "prompt_target_user"
+                        action_data = {}
+                    else:
+                        if "to admin" in p_lower or "as admin" in p_lower or p_lower.endswith("admin"):
+                            new_role = "admin"
+                        elif "to tenant" in p_lower or "as tenant" in p_lower or "to resident" in p_lower or "as resident" in p_lower or p_lower.endswith(("tenant", "resident")):
+                            new_role = "tenant"
+                        elif any(m in p_lower for m in ["manager", "property_manager"]):
+                            new_role = "property_manager"
+                        elif "admin" in p_lower:
+                            new_role = "admin"
+                        else:
+                            new_role = "property_manager"
+
+                        target_user.role = new_role
+                        self.db.commit()
+                        self.db.refresh(target_user)
+                        resp_text = f"User '{target_user.email}' ({target_user.full_name}) has been assigned role '{target_user.role}'."
+                        action_name = "update_user_role"
+                        action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role}
+
+                # Handle Delete User
                 else:
-                    deleted_email = target_user.email
-                    self.db.delete(target_user)
-                    self.db.commit()
-                    resp_text = f"User account '{deleted_email}' has been permanently deleted from StayOps."
-                    action_name = "delete_user"
-                    action_data = {"deleted_email": deleted_email}
+                    if not target_user:
+                        resp_text = "Please specify the user email to delete, e.g., 'Delete user test@stayops.ai'."
+                        action_name = "prompt_target_user"
+                        action_data = {}
+                    else:
+                        deleted_email = target_user.email
+                        self.db.delete(target_user)
+                        self.db.commit()
+                        resp_text = f"User account '{deleted_email}' has been permanently deleted from StayOps."
+                        action_name = "delete_user"
+                        action_data = {"deleted_email": deleted_email}
 
             elapsed = round((time.time() - t0) * 1000, 2)
             self._record_task(
@@ -864,6 +986,459 @@ class OrchestratorAgent:
                 "status": "completed",
                 "primary_agent": "orchestrator",
                 "executed_agents": [self.name, "system_auth_agent", self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": "Central Orchestrator",
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 1b: Property Management (Add Property, Delete Property)
+        # -------------------------------------------------------------
+        is_add_property = any(k in p_lower for k in [
+            "add property", "create property", "new property", "register property",
+            "add pg", "create pg", "new pg", "register pg", "add new property"
+        ])
+        is_delete_property = any(k in p_lower for k in ["delete property", "remove property", "drop property"])
+        is_property_mgmt = is_add_property or is_delete_property
+
+        if is_property_mgmt:
+            if caller_role == "tenant":
+                return self._permission_denied_response("property_management", wf, start_time)
+
+            if is_add_property:
+                # Extract Property Name
+                name_match = re.search(r'["\']([^"\']+)["\']', prompt)
+                if name_match:
+                    prop_name = name_match.group(1).strip()
+                else:
+                    m = re.search(r'(?:property|pg|called|named)\s+([a-zA-Z0-9\s\-]+?)(?:\s+(?:in|at|city|with|code|pincode|state)|$)', prompt, re.IGNORECASE)
+                    prop_name = m.group(1).strip() if m else "StayOps Heights PG"
+
+                if prop_name.lower() in ["a", "an", "the", "new", "property", "pg"]:
+                    prop_name = "StayOps Heights PG"
+
+                # Extract City
+                city = "Bengaluru"
+                for c in ["bengaluru", "bangalore", "pune", "mumbai", "delhi", "hyderabad", "chennai", "noida", "gurugram"]:
+                    if c in p_lower:
+                        city = "Bengaluru" if c == "bangalore" else c.title()
+                        break
+                else:
+                    city_m = re.search(r'(?:in|at|city)\s+([a-zA-Z]+)', prompt, re.IGNORECASE)
+                    if city_m and city_m.group(1).lower() not in ["property", "pg", "room", "bed"]:
+                        city = city_m.group(1).title()
+
+                city_code = city[:3].upper()
+                clean_name = re.sub(r'[^a-zA-Z0-9]', '', prop_name)[:4].upper()
+                slug = hex(int(time.time()))[4:].upper()
+                prop_code = f"SO-{city_code}-{clean_name}-{slug}"
+
+                pin_m = re.search(r'\b(\d{6})\b', prompt)
+                pincode = pin_m.group(1) if pin_m else ("560034" if city == "Bengaluru" else "411014")
+                addr_m = re.search(r'(?:at|address)\s+([a-zA-Z0-9\s,]+?)(?:\s+(?:in|city|pincode)|$)', prompt, re.IGNORECASE)
+                address = addr_m.group(1).strip() if addr_m else f"Plot 42, Central Tech Park Road, {city}"
+
+                floor_m = re.search(r'(\d+)\s*(?:floors?|storeys?)', p_lower)
+                total_floors = int(floor_m.group(1)) if floor_m else 3
+
+                new_property = Property(
+                    name=prop_name.title(),
+                    code=prop_code,
+                    address=address,
+                    city=city,
+                    state="Karnataka" if city == "Bengaluru" else "Maharashtra",
+                    pincode=pincode,
+                    total_floors=total_floors,
+                    rules_summary="Gate curfew 11:00 PM. High-speed Wi-Fi, biometric entry, daily housekeeping, and power backup active.",
+                    amenities=["High-Speed 200Mbps Wi-Fi", "Daily Room Cleaning", "Power Backup 24/7", "RO Purifier", "CCTV Security"],
+                    manager_name="Rajesh Sharma",
+                    manager_phone="+919876500001",
+                    manager_email="manager@stayops.ai",
+                    is_active=True,
+                )
+                self.db.add(new_property)
+                self.db.commit()
+                self.db.refresh(new_property)
+
+                resp_text = (
+                    f"Property '{new_property.name}' (Code: {new_property.code}) has been successfully created and added to the StayOps portfolio! "
+                    f"Location: {new_property.address}, {new_property.city} ({new_property.pincode}), Total Floors: {new_property.total_floors}. "
+                    f"Amenities and standard PG operations rules configured."
+                )
+                action_name = "create_property"
+                action_data = {
+                    "property_id": new_property.id,
+                    "name": new_property.name,
+                    "code": new_property.code,
+                    "city": new_property.city,
+                    "address": new_property.address,
+                    "total_floors": new_property.total_floors,
+                }
+            else:
+                target_p = None
+                for p in self.db.query(Property).all():
+                    if p.name.lower() in p_lower or p.code.lower() in p_lower:
+                        target_p = p
+                        break
+                if not target_p:
+                    resp_text = "Please specify the name or code of the property you wish to remove."
+                    action_name = "delete_property_noop"
+                    action_data = {}
+                else:
+                    p_name = target_p.name
+                    self.db.delete(target_p)
+                    self.db.commit()
+                    resp_text = f"Property '{p_name}' and all associated units have been permanently removed from StayOps."
+                    action_name = "delete_property"
+                    action_data = {"deleted_property": p_name}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.leasing.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.leasing.name,
+                "executed_agents": [self.name, self.leasing.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": "Central Orchestrator",
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 1c: Room Management (Add Room, Delete Room)
+        # -------------------------------------------------------------
+        is_add_room = any(k in p_lower for k in [
+            "add room", "create room", "new room", "add new room"
+        ])
+        is_delete_room = any(k in p_lower for k in ["delete room", "remove room", "drop room"])
+        is_room_mgmt = is_add_room or is_delete_room
+
+        if is_room_mgmt:
+            if caller_role == "tenant":
+                return self._permission_denied_response("room_management", wf, start_time)
+
+            if is_add_room:
+                room_num = "301"
+                num_m = re.search(r'\b([A-Za-z]?\-?\d{2,4}[A-Za-z]?)\b', prompt)
+                if num_m:
+                    room_num = num_m.group(1).upper()
+                elif "room" in p_lower:
+                    m = re.search(r'room\s*([A-Za-z0-9\-]+)', p_lower)
+                    if m:
+                        room_num = m.group(1).upper()
+
+                r_type = "Double"
+                if "single" in p_lower:
+                    r_type = "Single"
+                elif "triple" in p_lower:
+                    r_type = "Triple"
+                elif "quad" in p_lower or "four" in p_lower:
+                    r_type = "Quad"
+
+                rent_m = re.search(r'(?:rent|rate|amount|rs\.?|inr|₹)\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)', prompt, re.IGNORECASE)
+                if rent_m:
+                    base_rent = float(rent_m.group(1).replace(",", ""))
+                else:
+                    rent_defaults = {"Single": 16000.0, "Double": 12000.0, "Triple": 8500.0, "Quad": 6500.0}
+                    base_rent = rent_defaults.get(r_type, 12000.0)
+
+                floor_m = re.search(r'(\d+)(?:st|nd|rd|th)?\s*floor', p_lower)
+                if floor_m:
+                    floor_num = int(floor_m.group(1))
+                else:
+                    digits = [c for c in room_num if c.isdigit()]
+                    floor_num = int(digits[0]) if digits else 1
+
+                prop = None
+                for p in self.db.query(Property).all():
+                    if p.name.lower() in p_lower or p.city.lower() in p_lower:
+                        prop = p
+                        break
+                if not prop:
+                    prop = self.db.query(Property).first()
+
+                new_room = Room(
+                    property_id=prop.id if prop else "default-prop",
+                    room_number=room_num,
+                    floor_number=floor_num,
+                    room_type=r_type,
+                    base_rent=base_rent,
+                    is_available=True,
+                )
+                self.db.add(new_room)
+                self.db.commit()
+                self.db.refresh(new_room)
+
+                bed_count_map = {"Single": 1, "Double": 2, "Triple": 3, "Quad": 4}
+                num_beds = bed_count_map.get(r_type, 2)
+                labels = ["A", "B", "C", "D"][:num_beds]
+                created_beds = []
+                for lbl in labels:
+                    bed = Bed(room_id=new_room.id, bed_label=lbl, status="available", monthly_rent=base_rent)
+                    created_beds.append(bed)
+                self.db.add_all(created_beds)
+                self.db.commit()
+
+                prop_name = prop.name if prop else "StayOps PG"
+                resp_text = (
+                    f"Room {new_room.room_number} ({new_room.room_type}) with {len(created_beds)} bed(s) has been successfully created in '{prop_name}'! "
+                    f"Floor: {new_room.floor_number}, Monthly Base Rent: ₹{base_rent:,.0f}. "
+                    f"Inventory slots ({', '.join([b.bed_label for b in created_beds])}) are available and relisted for tenant booking."
+                )
+                action_name = "create_room"
+                action_data = {
+                    "room_id": new_room.id,
+                    "room_number": new_room.room_number,
+                    "room_type": new_room.room_type,
+                    "property_name": prop_name,
+                    "base_rent": base_rent,
+                    "beds_created": len(created_beds),
+                }
+            else:
+                room_to_del = None
+                r_match = re.search(r'room\s*([A-Za-z0-9\-]+)', p_lower)
+                if r_match:
+                    r_code = r_match.group(1).upper()
+                    room_to_del = self.db.query(Room).filter(Room.room_number.ilike(f"%{r_code}%")).first()
+                if not room_to_del:
+                    resp_text = "Please specify the room number to remove, e.g. 'Delete room 301'."
+                    action_name = "delete_room_noop"
+                    action_data = {}
+                else:
+                    r_n = room_to_del.room_number
+                    self.db.delete(room_to_del)
+                    self.db.commit()
+                    resp_text = f"Room {r_n} and all associated beds have been removed from inventory."
+                    action_name = "delete_room"
+                    action_data = {"deleted_room": r_n}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.leasing.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.leasing.name,
+                "executed_agents": [self.name, self.leasing.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": "Central Orchestrator",
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 1d: Bed Management (Add Bed, Set Bed Vacant/Available, Set Bed Occupied)
+        # -------------------------------------------------------------
+        is_add_bed = any(k in p_lower for k in ["add bed", "create bed", "new bed", "add a bed"])
+        is_set_vacant = (
+            ("bed" in p_lower or "slot" in p_lower or "unit" in p_lower)
+            and any(k in p_lower for k in ["vacant", "available", "relist"])
+            and any(act in p_lower for act in ["set", "mark", "make", "relist", "change", "update", "turn"])
+        ) or any(k in p_lower for k in [
+            "set bed vacant", "mark bed vacant", "make bed vacant", "relist bed",
+            "set vacant", "mark vacant", "make vacant", "mark as vacant", "set as vacant",
+            "mark available", "set available", "set bed available", "mark bed available"
+        ])
+        is_set_occupied = (
+            ("bed" in p_lower or "slot" in p_lower or "unit" in p_lower)
+            and any(k in p_lower for k in ["occupied", "taken", "booked", "fill"])
+            and any(act in p_lower for act in ["set", "mark", "make", "change", "update", "turn"])
+        ) or any(k in p_lower for k in [
+            "set bed occupied", "mark bed occupied", "make bed occupied",
+            "set occupied", "mark occupied", "make occupied", "mark as occupied", "set as occupied"
+        ])
+        is_set_maintenance = any(k in p_lower for k in ["set bed maintenance", "mark bed maintenance", "bed under repair"])
+        is_bed_mgmt = is_add_bed or is_set_vacant or is_set_occupied or is_set_maintenance
+
+        if is_bed_mgmt:
+            if caller_role == "tenant":
+                return self._permission_denied_response("bed_management", wf, start_time)
+
+            if is_add_bed:
+                room = None
+                r_match = re.search(r'room\s*([A-Za-z0-9\-]+)', p_lower)
+                if r_match:
+                    r_code = r_match.group(1).upper()
+                    room = self.db.query(Room).filter(Room.room_number.ilike(f"%{r_code}%")).first()
+                if not room:
+                    room = self.db.query(Room).first()
+
+                existing_labels = [b.bed_label.upper() for b in room.beds] if room else []
+                label_explicit = re.search(r'bed\s*([A-Za-z0-9\-]+)', p_lower)
+                if label_explicit and label_explicit.group(1).upper() not in ["A", "AN", "NEW", "A BED", "SLOT"]:
+                    bed_label = label_explicit.group(1).upper()
+                else:
+                    for char in ["A", "B", "C", "D", "E", "F"]:
+                        if char not in existing_labels:
+                            bed_label = char
+                            break
+                    else:
+                        bed_label = f"Bed {len(existing_labels) + 1}"
+
+                rent_m = re.search(r'(?:rent|rate|amount|rs\.?|inr|₹)\s*[:=]?\s*(\d+(?:,\d+)*(?:\.\d+)?)', prompt, re.IGNORECASE)
+                rent_val = float(rent_m.group(1).replace(",", "")) if rent_m else (room.base_rent if room else 11000.0)
+
+                new_bed = Bed(
+                    room_id=room.id if room else "default-room",
+                    bed_label=bed_label,
+                    status="available",
+                    monthly_rent=rent_val,
+                )
+                self.db.add(new_bed)
+                if room:
+                    room.is_available = True
+                self.db.commit()
+                self.db.refresh(new_bed)
+
+                r_str = f"Room {room.room_number}" if room else "Room"
+                p_str = room.property.name if room and room.property else "StayOps PG"
+                resp_text = (
+                    f"Bed {new_bed.bed_label} has been successfully added to {r_str} at {p_str}! "
+                    f"Monthly Rent: ₹{rent_val:,.0f}, Status: AVAILABLE. Slot is now open for prospective resident bookings."
+                )
+                action_name = "create_bed"
+                action_data = {
+                    "bed_id": new_bed.id,
+                    "bed_label": new_bed.bed_label,
+                    "room": r_str,
+                    "property": p_str,
+                    "monthly_rent": rent_val,
+                    "status": "available",
+                }
+            else:
+                target_status = "available"
+                if is_set_occupied:
+                    target_status = "occupied"
+                elif is_set_maintenance:
+                    target_status = "maintenance"
+
+                target_bed = None
+                label_m = re.search(r'bed\s*([A-Za-z0-9\-]+)', p_lower)
+                room_m = re.search(r'room\s*([A-Za-z0-9\-]+)', p_lower)
+
+                if room_m:
+                    r_code = room_m.group(1).upper()
+                    r_obj = self.db.query(Room).filter(Room.room_number.ilike(f"%{r_code}%")).first()
+                    if r_obj:
+                        if label_m:
+                            l_code = label_m.group(1).upper().replace("BED", "").strip("- ")
+                            target_bed = self.db.query(Bed).filter(Bed.room_id == r_obj.id, Bed.bed_label.ilike(f"%{l_code}%")).first()
+                        if not target_bed:
+                            if target_status == "available":
+                                target_bed = self.db.query(Bed).filter(Bed.room_id == r_obj.id, Bed.status != "available").first()
+                            else:
+                                target_bed = self.db.query(Bed).filter(Bed.room_id == r_obj.id, Bed.status == "available").first()
+                        if not target_bed and r_obj.beds:
+                            target_bed = r_obj.beds[0]
+
+                if not target_bed and label_m:
+                    l_code = label_m.group(1).upper().replace("BED", "").strip("- ")
+                    target_bed = self.db.query(Bed).filter(Bed.bed_label.ilike(f"%{l_code}%")).first()
+
+                if not target_bed:
+                    if target_status == "available":
+                        target_bed = self.db.query(Bed).filter(Bed.status == "occupied").first()
+                    else:
+                        target_bed = self.db.query(Bed).filter(Bed.status == "available").first()
+                if not target_bed:
+                    target_bed = self.db.query(Bed).first()
+
+                if target_bed:
+                    target_bed.status = target_status
+                    self.db.commit()
+                    r_obj = target_bed.room
+                    if r_obj:
+                        r_obj.is_available = any(b.status == "available" for b in r_obj.beds)
+                        self.db.commit()
+
+                    status_display = "VACANT (available for relisting)" if target_status == "available" else target_status.upper()
+                    r_num = r_obj.room_number if r_obj else "101"
+                    p_name = r_obj.property.name if r_obj and r_obj.property else "StayOps PG"
+                    resp_text = (
+                        f"Bed {target_bed.bed_label} in Room {r_num} ({p_name}) has been successfully updated to status {status_display}. "
+                        f"Inventory state and occupancy metrics updated."
+                    )
+                    action_name = "update_bed_status"
+                    action_data = {
+                        "bed_id": target_bed.id,
+                        "bed_label": target_bed.bed_label,
+                        "room": r_num,
+                        "property": p_name,
+                        "status": target_status,
+                    }
+                else:
+                    resp_text = "No matching bed found to update."
+                    action_name = "bed_status_noop"
+                    action_data = {}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.vacancy_revenue.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.vacancy_revenue.name,
+                "executed_agents": [self.name, self.vacancy_revenue.name, self.facilitator.name],
                 "action_performed": action_name,
                 "response": resp_text,
                 "llm_synthesis": resp_text,
@@ -984,6 +1559,9 @@ class OrchestratorAgent:
         # 2b. Assign Vendor to Ticket
         is_assign_vendor = any(k in p_lower for k in ["assign vendor", "assign contractor", "dispatch vendor", "assign plumber", "assign electrician"])
         if is_assign_vendor:
+            if caller_role == "tenant":
+                return self._permission_denied_response("assign_vendor", wf, start_time)
+
             ticket = None
             uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
             if uuid_match:
@@ -1056,8 +1634,18 @@ class OrchestratorAgent:
             }
 
         # 2c. Resolve / Close Ticket
-        is_resolve_ticket = any(k in p_lower for k in ["resolve ticket", "close ticket", "mark ticket as resolved", "complete ticket", "fix ticket"])
+        is_resolve_ticket = any(k in p_lower for k in [
+            "resolve maintenance", "resolve ticket", "close ticket", "close maintenance",
+            "mark ticket as resolved", "complete ticket", "fix ticket", "resolve repair",
+            "resolve work order", "complete maintenance", "mark as resolved", "mark maintenance resolved"
+        ]) or (
+            ("resolve" in p_lower or "close" in p_lower or "fix" in p_lower)
+            and any(w in p_lower for w in ["maintenance", "ticket", "repair", "issue", "work order"])
+        )
         if is_resolve_ticket:
+            if caller_role == "tenant":
+                return self._permission_denied_response("resolve_maintenance_ticket", wf, start_time)
+
             ticket = None
             uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
             if uuid_match:
@@ -1116,6 +1704,8 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         is_approval_action = any(k in p_lower for k in ["approve all", "approve pending", "clear approvals", "approve request", "approve approval", "approve safety gate", "reject request", "reject approval", "decline approval"])
         if is_approval_action:
+            if caller_role == "tenant":
+                return self._permission_denied_response("approve_safety_gate", wf, start_time)
             if any(k in p_lower for k in ["approve all", "approve pending", "clear approvals"]):
                 pending = self.db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").all()
                 count = len(pending)
@@ -1244,6 +1834,8 @@ class OrchestratorAgent:
                 action_name = "schedule_property_visit"
                 action_data = {"visit_id": visit.id, "visitor_name": visitor_name, "status": "scheduled"}
             else:
+                if caller_role == "tenant":
+                    return self._permission_denied_response("manage_property_visit", wf, start_time)
                 new_status = "completed" if any(k in p_lower for k in ["complete", "finish", "done"]) else ("cancelled" if any(k in p_lower for k in ["cancel", "reject", "decline"]) else "confirmed")
 
                 # Extract target name from prompt
@@ -1371,6 +1963,8 @@ class OrchestratorAgent:
         ])
 
         if is_create_lease:
+            if caller_role == "tenant":
+                return self._permission_denied_response("create_lease", wf, start_time)
             # Extract name
             name_m = re.search(r'(?:for|to|tenant|resident)\s+([a-zA-Z\s]+?)(?:\s+(?:in|at|room|rent|with|bed|on)|$)', prompt, re.IGNORECASE)
             t_name = name_m.group(1).strip() if name_m else "Prospective Resident"
@@ -1507,6 +2101,8 @@ class OrchestratorAgent:
             }
 
         if is_lease_notice:
+            if caller_role == "tenant":
+                return self._permission_denied_response("terminate_lease", wf, start_time)
             tenant = None
             email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
             if email_match:
@@ -1574,6 +2170,8 @@ class OrchestratorAgent:
         ])
 
         if is_record_payment:
+            if caller_role == "tenant" and any(k in p_lower for k in ["collect rent", "received rent", "record payment for", "record rent for"]):
+                return self._permission_denied_response("record_rent_payment", wf, start_time)
             # Extract amount
             amt_match = re.search(r'(?:rs\.?|inr|₹|\$)?\s*(\d+(?:,\d+)*(?:\.\d+)?)', prompt, re.IGNORECASE)
             amount = float(amt_match.group(1).replace(",", "")) if amt_match else 12000.0
@@ -1691,6 +2289,8 @@ class OrchestratorAgent:
             }
 
         if is_send_reminder:
+            if caller_role == "tenant":
+                return self._permission_denied_response("send_rent_reminders", wf, start_time)
             from backend.app.services.whatsapp_service import send_whatsapp_rent_reminder
             overdue_records = self.db.query(RentRecord).filter(RentRecord.status.in_(["pending", "overdue"])).all()
             reminded_count = 0
@@ -1758,6 +2358,8 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         is_announcement = any(k in p_lower for k in ["create announcement", "post announcement", "broadcast notice", "send notice to residents"])
         if is_announcement:
+            if caller_role == "tenant":
+                return self._permission_denied_response("broadcast_announcement", wf, start_time)
             ann_text = prompt
             for prefix in ["create announcement:", "create announcement", "post announcement:", "post announcement", "broadcast notice:", "broadcast notice"]:
                 if prefix in p_lower:
@@ -1878,6 +2480,8 @@ class OrchestratorAgent:
                 primary_agent_name = self.leasing.name
 
             elif is_list_users:
+                if caller_role == "tenant":
+                    return self._permission_denied_response("list_users", wf, start_time)
                 users = self.db.query(User).order_by(User.created_at.desc()).all()
                 user_items = [{"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in users]
                 lines = [f"System contains {len(users)} registered user accounts:"]
@@ -1932,6 +2536,8 @@ class OrchestratorAgent:
                 primary_agent_name = self.tenant_support.name
 
             elif is_list_approvals:
+                if caller_role == "tenant":
+                    return self._permission_denied_response("list_approvals", wf, start_time)
                 approvals = self.db.query(ApprovalRequest).order_by(ApprovalRequest.created_at.desc()).all()
                 app_items = []
                 lines = [f"Found {len(approvals)} safety gate approval requests:"]
