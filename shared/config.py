@@ -84,6 +84,10 @@ class Settings(BaseSettings):
         default=2000, description="Maintenance cost (INR) above which human approval is required."
     )
 
+    # ---- n8n Multi-Agent Workflow Engine ----
+    use_n8n_orchestrator: bool = True
+    n8n_webhook_url: str = "http://localhost:5678/webhook/stayops-agent"
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sqlalchemy_url(self) -> str:
