@@ -110,6 +110,11 @@ export default function LoginPage() {
           setAuthSuccessNotice(`Verification code sent to ${authEmail}. Please check your inbox.`);
         } else {
           // Verify OTP & Complete Registration
+          const cleanedOtp = authOtp.trim();
+          if (cleanedOtp.length !== 6) {
+            throw new Error("Please enter all 6 digits of the verification code.");
+          }
+
           const vRes = await fetch(`${API_URL}/api/auth/register`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -118,7 +123,7 @@ export default function LoginPage() {
               password: authPassword,
               full_name: authFullName.trim(),
               role: authRole,
-              otp: authOtp.trim(),
+              otp: cleanedOtp,
             }),
           });
           const vData = await vRes.json();
@@ -132,6 +137,36 @@ export default function LoginPage() {
       }
     } catch (err: any) {
       setAuthError(err.message || "An unexpected error occurred. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (otpCountdown > 0 || loading) return;
+    setLoading(true);
+    setAuthError("");
+    setAuthSuccessNotice("");
+    try {
+      const otpRes = await fetch(`${API_URL}/api/auth/send-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: authEmail.trim().toLowerCase(),
+          full_name: authFullName.trim(),
+          role: authRole,
+          purpose: "registration",
+        }),
+      });
+      const otpData = await otpRes.json();
+      if (!otpRes.ok) {
+        throw new Error(otpData.detail || "Unable to resend verification code. Please check your email.");
+      }
+      setOtpCountdown(60);
+      setAuthOtp("");
+      setAuthSuccessNotice(`New verification code sent to ${authEmail}. Please check your inbox.`);
+    } catch (err: any) {
+      setAuthError(err.message || "Failed to resend code. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -457,9 +492,23 @@ export default function LoginPage() {
                 >
                   ← Edit details
                 </button>
-                <span style={{ color: otpCountdown > 0 ? "#9ca3af" : "#2563eb" }}>
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  disabled={otpCountdown > 0 || loading}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: otpCountdown > 0 ? "#9ca3af" : "#2563eb",
+                    cursor: otpCountdown > 0 || loading ? "not-allowed" : "pointer",
+                    padding: 0,
+                    fontWeight: 600,
+                    fontSize: 12,
+                    textDecoration: otpCountdown > 0 ? "none" : "underline",
+                  }}
+                >
                   {otpCountdown > 0 ? `Resend in ${otpCountdown}s` : "Resend code"}
-                </span>
+                </button>
               </div>
 
               <button

@@ -39,3 +39,7 @@ services:
         sync: false
       - key: WHATSAPP_VERIFY_TOKEN
         value: stayops_wa_verify_token_2026
+      - key: BREVO_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "StayOps <noreply@sashankkarn.com.np>"

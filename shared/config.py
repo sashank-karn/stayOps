@@ -64,7 +64,10 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_verify_token: str = ""
 
-    # ---- Email / SMTP ----
+    # ---- Email Services (HTTP API & SMTP) ----
+    brevo_api_key: str = ""
+    resend_api_key: str = ""
+    email_from: str = "StayOps Security <noreply@sashankkarn.com.np>"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
