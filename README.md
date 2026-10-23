@@ -180,3 +180,18 @@ pytest -v
 8. **Check Comms & Integrations Hub**:
    - Switch to **"Services & Comms"** tab.
    - Verify live service health cards, inspect the email dispatch history, view the operations calendar feed, and view the simulated resident WhatsApp inbox.
+
+---
+
+## 7. n8n Multi-Agent Workflow Automation
+
+StayOps includes a production-ready n8n workflow definition in [`stayops_n8n_workflow.json`](stayops_n8n_workflow.json).
+
+### Quick Setup:
+1. Open any n8n instance and press `Ctrl + V` on the canvas to import.
+2. The workflow provides:
+   - **Inbound Webhook (`/webhook/stayops-agent`)**: Routes natural-language operational tasks directly to the multi-agent engine.
+   - **Daily Cron Schedule (09:00 AM)**: Automated portfolio audits and safety gate checks.
+   - **Role-Based Routing**: Auto-handles RBAC security alerts (HTTP 403) and operations logs (HTTP 200).
+3. Read the complete guide in [`docs/N8N_INTEGRATION_GUIDE.md`](docs/N8N_INTEGRATION_GUIDE.md).
+
