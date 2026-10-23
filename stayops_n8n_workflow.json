@@ -1,0 +1,349 @@
+{
+  "name": "StayOps AI Multi-Agent Operations & Workflow Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stayops-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1d7f1234-5678-4abc-9def-012345678901",
+      "name": "Webhook - Inbound Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "webhookId": "stayops-agent-webhook"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "2e8f1234-5678-4abc-9def-012345678902",
+      "name": "Daily Operations Heartbeat",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare daily inspection audit payload for Central Orchestrator\nreturn [{\n  json: {\n    message: \"Audit portfolio occupancy, check overdue rent dues, and review pending safety gate approvals\",\n    caller_role: \"admin\",\n    email: \"admin@stayops.ai\",\n    source: \"scheduled_heartbeat\"\n  }\n}];"
+      },
+      "id": "3f9f1234-5678-4abc-9def-012345678903",
+      "name": "Prepare Heartbeat Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize incoming webhook payload\nconst body = $json.body || $json;\n\nconst prompt = body.message || body.prompt || body.text || \"list the property\";\nconst caller_role = (body.caller_role || body.role || body.user_role || \"property_manager\").toLowerCase().trim();\nconst email = body.email || body.admin_email || (caller_role === \"tenant\" ? \"resident@stayops.ai\" : \"manager@stayops.ai\");\n\nreturn [{\n  json: {\n    message: prompt,\n    caller_role: caller_role,\n    email: email,\n    source: \"webhook_trigger\",\n    received_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "4a0f1234-5678-4abc-9def-012345678904",
+      "name": "Parse & Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $vars.STAYOPS_API_URL || 'http://localhost:8000' }}/api/agents/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.message }}\",\n  \"context\": {\n    \"user_role\": \"{{ $json.caller_role }}\",\n    \"email\": \"{{ $json.email }}\"\n  }\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "5b1f1234-5678-4abc-9def-012345678905",
+      "name": "Call StayOps Agent Engine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action_performed }}",
+                    "rightValue": "permission_denied",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Permission Denied"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action_performed }}",
+                    "rightValue": "orchestrator_dispatch",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Mutation Executed"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "Query / Analysis"
+        }
+      },
+      "id": "6c2f1234-5678-4abc-9def-012345678906",
+      "name": "Route by Action Performed",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        980,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Security & RBAC Alert Notification Formatter\nconst res = $json.body || $json;\nreturn [{\n  json: {\n    status: \"denied\",\n    http_status: 403,\n    title: \"[ALERT] StayOps Guardian: Permission Denied\",\n    agent: res.agent || \"StayOps Guardian\",\n    denied_action: res.data?.denied_action || \"unauthorized_operation\",\n    message: res.response,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "7d3f1234-5678-4abc-9def-012345678907",
+      "name": "Format Security Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Operational State Mutation Formatter\nconst res = $json.body || $json;\nreturn [{\n  json: {\n    status: \"success\",\n    http_status: 200,\n    title: \"[SUCCESS] StayOps Operations: Action Completed\",\n    agent: res.agent || \"Central Orchestrator\",\n    action_performed: res.action_performed,\n    details: res.data || {},\n    response: res.response,\n    execution_time_ms: res.execution_time_ms || 0,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "8e4f1234-5678-4abc-9def-012345678908",
+      "name": "Format Operations Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Query / Analytical Synthesis Formatter\nconst res = $json.body || $json;\nreturn [{\n  json: {\n    status: \"success\",\n    http_status: 200,\n    title: \"[INSIGHT] StayOps Intelligence Summary\",\n    agent: res.agent || \"Central Orchestrator\",\n    action_performed: res.action_performed || \"analytical_query\",\n    response: res.response,\n    suggestions: res.suggestions || [],\n    data: res.data || {},\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "9f5f1234-5678-4abc-9def-012345678909",
+      "name": "Format Query Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": "={{ $json.http_status || 200 }}"
+        }
+      },
+      "id": "0a6f1234-5678-4abc-9def-012345678910",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1520,
+        420
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Inbound Request": {
+      "main": [
+        [
+          {
+            "node": "Parse & Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Operations Heartbeat": {
+      "main": [
+        [
+          {
+            "node": "Prepare Heartbeat Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Heartbeat Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call StayOps Agent Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Call StayOps Agent Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call StayOps Agent Engine": {
+      "main": [
+        [
+          {
+            "node": "Route by Action Performed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Action Performed": {
+      "main": [
+        [
+          {
+            "node": "Format Security Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Operations Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Query Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Security Alert": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Operations Log": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Query Response": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "c1f23456-789a-bcde-f012-3456789abcde",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "stayops-n8n-instance"
+  },
+  "id": "stayops-ai-operations-dispatcher",
+  "tags": []
+}
