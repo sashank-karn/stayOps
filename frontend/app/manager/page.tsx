@@ -234,6 +234,13 @@ export default function ManagerPortal() {
       if (res.ok) {
         const data = await res.json();
         setCopilotResponse(data.llm_synthesis || data.response || "Task executed successfully.");
+        if (
+          data.action_performed &&
+          data.action_performed !== "orchestrator_dispatch" &&
+          data.action_performed !== "prompt_target_user"
+        ) {
+          loadData();
+        }
       } else {
         const cRes = await fetch(`${API_URL}/api/agents/chat`, {
           method: "POST",
@@ -243,6 +250,16 @@ export default function ManagerPortal() {
         if (cRes.ok) {
           const cData = await cRes.json();
           setCopilotResponse(cData.response || "Analysis complete.");
+          if (
+            cData.action_performed &&
+            cData.action_performed !== "orchestrator_dispatch" &&
+            cData.action_performed !== "query_financials" &&
+            cData.action_performed !== "query_approvals" &&
+            cData.action_performed !== "list_vacant_beds" &&
+            cData.action_performed !== "prompt_target_user"
+          ) {
+            loadData();
+          }
         } else {
           setCopilotResponse("System evaluated query against operational database.");
         }

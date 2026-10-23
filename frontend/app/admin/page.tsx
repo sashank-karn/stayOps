@@ -439,7 +439,14 @@ export default function AdminPortal() {
             suggestions: data.suggestions || [],
           },
         ]);
-        if (data.action_performed === "approve_all_pending") {
+        if (
+          data.action_performed &&
+          data.action_performed !== "orchestrator_dispatch" &&
+          data.action_performed !== "query_financials" &&
+          data.action_performed !== "query_approvals" &&
+          data.action_performed !== "list_vacant_beds" &&
+          data.action_performed !== "prompt_target_user"
+        ) {
           await refreshAdminData();
         }
       } else {
