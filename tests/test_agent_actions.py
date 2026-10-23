@@ -1,6 +1,7 @@
 """Unit and integration tests for Multi-Agent Operational Actions & Entity Queries."""
 import pytest
-from backend.app.db.session import SessionLocal
+from backend.app.db.session import SessionLocal, Base, engine
+from backend.app.db.seed import seed_database
 from agents.orchestrator.agent import OrchestratorAgent
 from backend.app.models.user import User
 from backend.app.models.maintenance import MaintenanceTicket
@@ -9,7 +10,9 @@ from backend.app.models.lead import PropertyVisit
 
 @pytest.fixture
 def db_session():
+    Base.metadata.create_all(bind=engine)
     db = SessionLocal()
+    seed_database(db=db)
     try:
         yield db
     finally:
