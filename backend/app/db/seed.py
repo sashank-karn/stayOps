@@ -36,6 +36,8 @@ def seed_users(db: Session) -> None:
             db.add(new_u)
         else:
             existing.is_verified = True
+            if u["email"] == "resident@stayops.ai":
+                existing.full_name = u["full_name"]
     db.commit()
 
 
