@@ -74,3 +74,11 @@ The Central Multi-Agent Orchestrator features an operational command interceptor
 - **Maintenance & Work Orders:** Automated severity/cost triage, vendor dispatch, and ticket resolution.
 - **Safety Gate Verification:** Direct authorization and human-in-the-loop approval management.
 - **Live Pipeline Visibility:** Instant tabular listings for properties, users, tickets, vendors, tours, tenants, approvals, and vacant beds.
+
+---
+
+## 5. Storage Layer Resilience & Entity Synchronization
+
+- **Connection Resilience:** The database session pooler incorporates a 5-second connection timeout guard. If remote cloud databases (such as Supabase, Neon, or Render) encounter network or IPv6 routing latency, the engine gracefully activates a local SQLite fallback (`sqlite:///./stayops.db`) ensuring uninterrupted service.
+- **Account & Entity Synchronization:** User profile modifications (email, full name, phone number) automatically propagate across associated domain records (`tenants` and `leads`) to maintain relational integrity and ensure consistent communication channels across portals.
+
