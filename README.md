@@ -193,5 +193,8 @@ StayOps includes a production-ready n8n workflow definition in [`stayops_n8n_wor
    - **Inbound Webhook (`/webhook/stayops-agent`)**: Routes natural-language operational tasks directly to the multi-agent engine.
    - **Daily Cron Schedule (09:00 AM)**: Automated portfolio audits and safety gate checks.
    - **Role-Based Routing**: Auto-handles RBAC security alerts (HTTP 403) and operations logs (HTTP 200).
+### Cloud Deployment & Database Persistence:
+For 24/7 cloud deployment on Render, configure n8n environment variables with your Supabase PostgreSQL pooler (`DB_TYPE=postgresdb`, `DB_POSTGRESDB_HOST=aws-0-ap-south-1.pooler.supabase.com`, `DB_POSTGRESDB_PORT=5432`) to prevent SQLite cold-start locks. n8n also exposes MCP server support at `/mcp-server/http`.
 3. Read the complete guide in [`docs/N8N_INTEGRATION_GUIDE.md`](docs/N8N_INTEGRATION_GUIDE.md).
+
 
