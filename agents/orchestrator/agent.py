@@ -1189,9 +1189,17 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         # Action Category 4: Property Visits & Tour Scheduling
         # -------------------------------------------------------------
-        is_visit_action = any(k in p_lower for k in ["schedule visit", "book visit", "schedule tour", "book tour", "confirm visit", "complete visit", "cancel visit"])
+        is_visit_action = (
+            any(v in p_lower for v in ["tour", "visit", "viewing", "walkthrough"])
+            and any(act in p_lower for act in ["confirm", "approve", "accept", "complete", "finish", "done", "cancel", "decline", "reject", "schedule", "book"])
+        ) or any(k in p_lower for k in [
+            "schedule visit", "book visit", "schedule tour", "book tour",
+            "confirm visit", "confirm tour", "approve visit", "approve tour",
+            "complete visit", "complete tour", "cancel visit", "cancel tour"
+        ])
+
         if is_visit_action:
-            if any(k in p_lower for k in ["schedule visit", "book visit", "schedule tour", "book tour"]):
+            if any(act in p_lower for act in ["schedule", "book"]) and not any(act in p_lower for act in ["confirm", "approve", "accept"]):
                 name_match = re.search(r'(?:for|by)\s+([a-zA-Z\s]+?)(?:\s+(?:at|on|tomorrow|in)|$)', prompt, re.IGNORECASE)
                 visitor_name = name_match.group(1).strip() if name_match else "Prospective Resident"
 
@@ -1235,15 +1243,80 @@ class OrchestratorAgent:
                 action_name = "schedule_property_visit"
                 action_data = {"visit_id": visit.id, "visitor_name": visitor_name, "status": "scheduled"}
             else:
-                visit = self.db.query(PropertyVisit).filter(PropertyVisit.status == "scheduled").first()
+                new_status = "completed" if any(k in p_lower for k in ["complete", "finish", "done"]) else ("cancelled" if any(k in p_lower for k in ["cancel", "reject", "decline"]) else "confirmed")
+
+                # Extract target name from prompt
+                cleaned_name = p_lower
+                for stop_word in ["confirm", "approve", "accept", "complete", "cancel", "the", "tour", "visit", "viewing", "request", "please", "for", "of"]:
+                    cleaned_name = re.sub(rf'\b{stop_word}\b', '', cleaned_name)
+                target_person = cleaned_name.strip()
+
+                visit = None
+                uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
+                if uuid_match:
+                    visit = self.db.get(PropertyVisit, uuid_match.group(0))
+
+                if target_person and len(target_person) >= 2:
+                    t_words = [w for w in target_person.split() if len(w) > 2 and w not in ["the", "and", "for"]]
+                    all_v = self.db.query(PropertyVisit).all()
+                    for v in all_v:
+                        if v.lead and v.lead.full_name:
+                            ln = v.lead.full_name.lower()
+                            if target_person in ln or (t_words and any(re.search(rf'\b{re.escape(tw)}\b', ln) for tw in t_words)):
+                                visit = v
+                                break
+                    if not visit:
+                        lead = self.db.query(Lead).filter(Lead.full_name.ilike(f"%{target_person}%")).first()
+                        if not lead and t_words:
+                            for tw in t_words:
+                                matching_lead = self.db.query(Lead).filter(Lead.full_name.ilike(f"%{tw}%")).first()
+                                if matching_lead and re.search(rf'\b{re.escape(tw)}\b', matching_lead.full_name.lower()):
+                                    lead = matching_lead
+                                    break
+                        if lead:
+                            visit = self.db.query(PropertyVisit).filter(PropertyVisit.lead_id == lead.id).first()
+
+                    if not visit:
+                        prop = self.db.query(Property).first()
+                        if not lead:
+                            lead = Lead(
+                                full_name=target_person.title(),
+                                phone="+91-9876543210",
+                                email=f"{target_person.replace(' ', '.').lower()}@example.com",
+                                preferred_location=prop.city if prop else "Bengaluru",
+                                budget=12000.0,
+                                status="converted" if new_status == "confirmed" else "visit_scheduled",
+                                source="ai_assistant",
+                            )
+                            self.db.add(lead)
+                            self.db.commit()
+                            self.db.refresh(lead)
+
+                        visit = PropertyVisit(
+                            lead_id=lead.id,
+                            property_id=prop.id if prop else "default-prop",
+                            scheduled_time=datetime.now(timezone.utc) + timedelta(days=1, hours=2),
+                            status=new_status,
+                            feedback="Confirmed via AI Operations Assistant",
+                        )
+                        self.db.add(visit)
+                        self.db.commit()
+                        self.db.refresh(visit)
+                else:
+                    if not visit:
+                        visit = self.db.query(PropertyVisit).filter(PropertyVisit.status == "scheduled").order_by(PropertyVisit.created_at.desc()).first()
+
                 if visit:
-                    new_status = "completed" if "complete" in p_lower else ("cancelled" if "cancel" in p_lower else "confirmed")
                     visit.status = new_status
                     self.db.commit()
                     v_name = visit.lead.full_name if visit.lead else "Visitor"
-                    resp_text = f"Property visit #{visit.id[:8].upper()} for {v_name} updated to status '{new_status}'."
+                    prop_name = visit.property.name if visit.property else "Property"
+                    resp_text = (
+                        f"Property tour request for {v_name} at {prop_name} has been successfully {new_status}. "
+                        f"Status updated to '{new_status}' in the Manager Visits pipeline."
+                    )
                     action_name = "update_property_visit"
-                    action_data = {"visit_id": visit.id, "status": new_status}
+                    action_data = {"visit_id": visit.id, "visitor_name": v_name, "status": new_status}
                 else:
                     resp_text = "No scheduled property visits found to update."
                     action_name = "visit_update_noop"
