@@ -134,3 +134,136 @@ def test_agent_confirm_tour_and_lease_and_payment(db_session):
     vacant_list = orchestrator.dispatch_interactive_task("show vacant rooms and beds")
     assert vacant_list["action_performed"] == "list_vacant_beds"
 
+
+def test_agent_property_room_bed_management(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+
+    # 1. Add Property
+    prop_res = orchestrator.dispatch_interactive_task(
+        "Add property StayOps Horizon at HSR Layout, Sector 2, Bengaluru with 4 floors"
+    )
+    assert prop_res["action_performed"] == "create_property"
+    assert "StayOps Horizon".lower() in prop_res["response"].lower()
+    prop_id = prop_res["data"]["property_id"]
+
+    # 2. Add Room to Property
+    room_res = orchestrator.dispatch_interactive_task(
+        f"Add room 302 Double with rent 13500 on 3rd floor in StayOps Horizon"
+    )
+    assert room_res["action_performed"] == "create_room"
+    assert "Room 302" in room_res["response"]
+    assert room_res["data"]["beds_created"] == 2
+
+    # 3. Add Bed to Room
+    bed_res = orchestrator.dispatch_interactive_task(
+        "Add bed C in room 302 rent 13500"
+    )
+    assert bed_res["action_performed"] == "create_bed"
+    assert "Bed C" in bed_res["response"]
+    assert bed_res["data"]["status"] == "available"
+
+    # 4. Update Bed Status to Occupied
+    occ_res = orchestrator.dispatch_interactive_task("Set bed C in room 302 occupied")
+    assert occ_res["action_performed"] == "update_bed_status"
+    assert occ_res["data"]["status"] == "occupied"
+
+    # 5. Mark Bed Vacant / Relist
+    vac_res = orchestrator.dispatch_interactive_task("Mark bed C in room 302 vacant")
+    assert vac_res["action_performed"] == "update_bed_status"
+    assert vac_res["data"]["status"] == "available"
+
+
+def test_agent_partial_name_user_resolution(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+
+    # User in seed is "Rohan Mehta (Resident)"
+    # Prompt: "Deactivate user Rohan"
+    deact_res = orchestrator.dispatch_interactive_task("Deactivate user Rohan")
+    assert deact_res["action_performed"] == "deactivate_user"
+    assert "Rohan" in deact_res["response"]
+    assert deact_res["data"]["is_active"] is False
+
+    # Prompt: "Activate user Rohan"
+    act_res = orchestrator.dispatch_interactive_task("Activate user Rohan")
+    assert act_res["action_performed"] == "activate_user"
+    assert "Rohan" in act_res["response"]
+    assert act_res["data"]["is_active"] is True
+
+
+def test_agent_resolve_maintenance_synonyms(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+
+    # Create ticket first
+    ticket_res = orchestrator.dispatch_interactive_task("Create maintenance ticket for broken geyser in room 204")
+    assert ticket_res["action_performed"] == "create_maintenance_ticket"
+
+    # Resolve using "resolve maintenance"
+    resolve_res = orchestrator.dispatch_interactive_task("resolve maintenance")
+    assert resolve_res["action_performed"] == "resolve_maintenance_ticket"
+    assert "marked as resolved" in resolve_res["response"]
+
+
+def test_agent_rbac_tenant_permission_denied(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+    tenant_context = {"user_role": "tenant", "email": "resident@stayops.ai"}
+
+    # 1. Tenant attempting to deactivate user -> DENIED
+    deact_res = orchestrator.dispatch_interactive_task("Deactivate user Rohan", context=tenant_context)
+    assert deact_res["action_performed"] == "permission_denied"
+    assert deact_res["data"]["denied_action"] == "user_management"
+    assert "Permission Denied" in deact_res["response"]
+
+    # 2. Tenant attempting to add property -> DENIED
+    prop_res = orchestrator.dispatch_interactive_task("Add property Royal Palace in Pune", context=tenant_context)
+    assert prop_res["action_performed"] == "permission_denied"
+    assert prop_res["data"]["denied_action"] == "property_management"
+
+    # 3. Tenant attempting to add room -> DENIED
+    room_res = orchestrator.dispatch_interactive_task("Add room 501 Single rent 18000", context=tenant_context)
+    assert room_res["action_performed"] == "permission_denied"
+    assert room_res["data"]["denied_action"] == "room_management"
+
+    # 4. Tenant attempting to manage beds -> DENIED
+    bed_res = orchestrator.dispatch_interactive_task("Mark bed A in room 101 vacant", context=tenant_context)
+    assert bed_res["action_performed"] == "permission_denied"
+    assert bed_res["data"]["denied_action"] == "bed_management"
+
+    # 5. Tenant attempting to assign vendor -> DENIED
+    assign_res = orchestrator.dispatch_interactive_task("Assign vendor plumber to ticket", context=tenant_context)
+    assert assign_res["action_performed"] == "permission_denied"
+    assert assign_res["data"]["denied_action"] == "assign_vendor"
+
+    # 6. Tenant attempting to resolve ticket -> DENIED
+    res_ticket = orchestrator.dispatch_interactive_task("Resolve maintenance ticket", context=tenant_context)
+    assert res_ticket["action_performed"] == "permission_denied"
+    assert res_ticket["data"]["denied_action"] == "resolve_maintenance_ticket"
+
+    # 7. Tenant attempting to approve safety gate -> DENIED
+    appr_res = orchestrator.dispatch_interactive_task("Approve all pending approvals", context=tenant_context)
+    assert appr_res["action_performed"] == "permission_denied"
+    assert appr_res["data"]["denied_action"] == "approve_safety_gate"
+
+    # 8. Tenant attempting to create lease -> DENIED
+    lease_res = orchestrator.dispatch_interactive_task("Create lease for Bob in room 202 rent 12000", context=tenant_context)
+    assert lease_res["action_performed"] == "permission_denied"
+    assert lease_res["data"]["denied_action"] == "create_lease"
+
+    # 9. Tenant attempting to broadcast announcement -> DENIED
+    ann_res = orchestrator.dispatch_interactive_task("Create announcement: Power outage at 5 PM", context=tenant_context)
+    assert ann_res["action_performed"] == "permission_denied"
+    assert ann_res["data"]["denied_action"] == "broadcast_announcement"
+
+    # 10. Tenant attempting to list users -> DENIED
+    list_u_res = orchestrator.dispatch_interactive_task("List all users", context=tenant_context)
+    assert list_u_res["action_performed"] == "permission_denied"
+    assert list_u_res["data"]["denied_action"] == "list_users"
+
+    # 11. Tenant allowed actions: filing ticket -> ALLOWED
+    ticket_res = orchestrator.dispatch_interactive_task("Create maintenance ticket for kitchen sink leakage", context=tenant_context)
+    assert ticket_res["action_performed"] == "create_maintenance_ticket"
+
+    # 12. Tenant allowed actions: booking tour -> ALLOWED
+    tour_res = orchestrator.dispatch_interactive_task("Schedule tour for myself tomorrow at 5 PM", context=tenant_context)
+    assert tour_res["action_performed"] == "schedule_property_visit"
+
+
