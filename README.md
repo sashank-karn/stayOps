@@ -194,7 +194,16 @@ StayOps includes a production-ready n8n workflow definition in [`stayops_n8n_wor
    - **Daily Cron Schedule (09:00 AM)**: Automated portfolio audits and safety gate checks.
    - **Role-Based Routing**: Auto-handles RBAC security alerts (HTTP 403) and operations logs (HTTP 200).
 ### Cloud Deployment & Database Persistence:
-For 24/7 cloud deployment on Render, configure n8n environment variables with your Supabase PostgreSQL pooler (`DB_TYPE=postgresdb`, `DB_POSTGRESDB_HOST=aws-0-ap-south-1.pooler.supabase.com`, `DB_POSTGRESDB_PORT=5432`) to prevent SQLite cold-start locks. n8n also exposes MCP server support at `/mcp-server/http`.
+For 24/7 cloud deployment on Render, configure n8n environment variables with your Supabase PostgreSQL pooler (`DB_TYPE=postgresdb`, `DB_POSTGRESDB_HOST=aws-0-ap-south-1.pooler.supabase.com`, `DB_POSTGRESDB_PORT=5432`) to prevent SQLite cold-start locks. Set `NODE_OPTIONS=--max-old-space-size=350` and `EXECUTIONS_PROCESS=main` to avoid 512MB RAM OOM reboots. n8n also exposes MCP server support at `/mcp-server/http`.
 3. Read the complete guide in [`docs/N8N_INTEGRATION_GUIDE.md`](docs/N8N_INTEGRATION_GUIDE.md).
+
+---
+
+## 8. Executive Property Manager AI Persona & Natural Language Directives
+
+StayOps orchestrator integrates with Google Gemini to understand dynamic natural language commands from property managers and system administrators:
+- **Administrative Persona**: The AI treats the caller with full administrative authority across all properties (`StayOps TechPG` in Koramangala Bengaluru, `StayOps CampusLiving` in Viman Nagar Pune), rooms, beds, tenants, and safety gates.
+- **Autonomous Operations**: Understands flexible requests such as allocating beds, handling spelling variations (`vimangar`), auditing financial ledgers, and surfacing high-expense safety gate approvals (> ₹2,000 INR).
+- **Graceful Fallbacks**: In case of rate limits or cloud connection latency, deterministic intent dispatchers ensure 100% operational continuity.
 
 
