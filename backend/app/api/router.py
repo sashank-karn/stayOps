@@ -998,7 +998,7 @@ def admin_assistant_chat(
     return {
         "response": text_resp,
         "agent": display_agent,
-        "action_performed": "orchestrator_dispatch",
+        "action_performed": dispatch_res.get("action_performed") or "orchestrator_dispatch",
         "data": dispatch_res.get("data"),
         "execution_time_ms": dispatch_res.get("execution_time_ms"),
         "suggestions": [
