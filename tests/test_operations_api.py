@@ -281,3 +281,44 @@ class TestOperationsAPI:
         assert comp_resp.status_code == 200
         assert comp_resp.json()["priority"] == "P1-Urgent"
 
+    def test_user_profile_update_endpoint(self, client_with_db):
+        """Test user profile update endpoint handles name, new email, and phone properly."""
+        client, session = client_with_db
+
+        # 1. Update resident profile
+        update_resp = client.put(
+            "/api/users/resident@stayops.ai/profile",
+            json={
+                "full_name": "Resident Updated Name",
+                "email": "new.resident.email@stayops.ai",
+                "phone": "+919999888877",
+                "password": "newsecretpassword123",
+            },
+        )
+        assert update_resp.status_code == 200
+        data = update_resp.json()
+        assert data["email"] == "new.resident.email@stayops.ai"
+        assert data["full_name"] == "Resident Updated Name"
+        assert data["phone"] == "+919999888877"
+
+        # Verify in database
+        from backend.app.models.user import User
+        user = session.query(User).filter(User.email == "new.resident.email@stayops.ai").first()
+        assert user is not None
+        assert user.full_name == "Resident Updated Name"
+        assert user.phone == "+919999888877"
+
+        # Verify sync with Tenant table
+        tenant = session.query(Tenant).filter(Tenant.email == "new.resident.email@stayops.ai").first()
+        assert tenant is not None
+        assert tenant.full_name == "Resident Updated Name"
+
+        # 2. Test duplicate email collision rejection
+        dup_resp = client.put(
+            "/api/users/new.resident.email@stayops.ai/profile",
+            json={"email": "admin@stayops.ai"},
+        )
+        assert dup_resp.status_code == 400
+        assert "already in use" in dup_resp.json()["detail"]
+
+
