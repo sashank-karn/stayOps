@@ -61,3 +61,16 @@ StayOps AI organizes property operations around a team of seven specialized agen
 5. **Step 4 — Maintenance & Vendor Agent:** Schedules room turnover deep clean with registered contractor. Flags `requires_approval = True` if cost > ₹2,000 threshold.
 6. **Step 5 — Facilitator Agent:** Validates that all schemas contain required keys, verifies absence of contradictions, and outputs execution audit health report.
 7. **Step 6 — Orchestrator Consolidation:** Synthesizes final response for property manager dashboard and logs workflow event.
+
+---
+
+## 4. Interactive Natural-Language Operational Action Engine
+
+The Central Multi-Agent Orchestrator features an operational command interceptor (`_execute_operational_action`) enabling natural language prompt execution across all core domain workflows:
+- **Property Tour Pipeline:** Scheduling, confirming, completing, and canceling tours with regex word-boundary visitor matching.
+- **Access & Auth Management:** Real-time user activation, deactivation, role modification, and account removal.
+- **Leasing & Allocation:** Automatic tenant creation, bed allocation (`occupied`), and 6-month active lease generation.
+- **Ledger & Collections:** Rent payment recording, ledger reconciliation (`paid`), UPI reference logging, and WhatsApp dunning reminders.
+- **Maintenance & Work Orders:** Automated severity/cost triage, vendor dispatch, and ticket resolution.
+- **Safety Gate Verification:** Direct authorization and human-in-the-loop approval management.
+- **Live Pipeline Visibility:** Instant tabular listings for properties, users, tickets, vendors, tours, tenants, approvals, and vacant beds.

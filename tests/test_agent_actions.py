@@ -93,3 +93,41 @@ def test_agent_list_properties_and_users(db_session):
     user_res = orchestrator.dispatch_interactive_task("list users")
     assert user_res["action_performed"] == "list_users"
     assert "registered user accounts" in user_res["response"]
+
+
+def test_agent_confirm_tour_and_lease_and_payment(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+
+    # 1. Confirm tour for Mohammed Al Hajj
+    tour_res = orchestrator.dispatch_interactive_task("confirm mohammed al hajj tour")
+    assert tour_res["action_performed"] == "update_property_visit"
+    assert "confirmed" in tour_res["response"].lower()
+    assert "mohammed" in tour_res["response"].lower()
+
+    # 2. Create Lease
+    lease_res = orchestrator.dispatch_interactive_task("create lease for Vikram Seth in room 101 rent 14000")
+    assert lease_res["action_performed"] == "create_lease_agreement"
+    assert "successfully created & activated" in lease_res["response"]
+
+    # 3. Record Rent Payment
+    pay_res = orchestrator.dispatch_interactive_task("record rent payment of 14000 for Vikram Seth")
+    assert pay_res["action_performed"] == "record_rent_payment"
+    assert "successfully recorded" in pay_res["response"]
+
+    # 4. Send Rent Reminders
+    remind_res = orchestrator.dispatch_interactive_task("send rent reminders to residents")
+    assert remind_res["action_performed"] == "send_rent_reminders"
+
+    # 5. List Entity Pipelines
+    tours_list = orchestrator.dispatch_interactive_task("list tours")
+    assert tours_list["action_performed"] == "list_tours"
+
+    tenants_list = orchestrator.dispatch_interactive_task("list tenants")
+    assert tenants_list["action_performed"] == "list_tenants"
+
+    approvals_list = orchestrator.dispatch_interactive_task("list approvals")
+    assert approvals_list["action_performed"] == "list_approvals"
+
+    vacant_list = orchestrator.dispatch_interactive_task("show vacant rooms and beds")
+    assert vacant_list["action_performed"] == "list_vacant_beds"
+
