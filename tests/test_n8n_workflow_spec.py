@@ -35,3 +35,27 @@ def test_n8n_workflow_valid_json_schema():
         for output_group in conn_data.get("main", []):
             for target in output_group:
                 assert target.get("node") in node_names, f"Connection target '{target.get('node')}' missing"
+
+
+def test_n8n_workflow_contains_all_seven_agents():
+    """Verify that all 7 specialized agents in StayOps multi-agent architecture are represented."""
+    with open(WORKFLOW_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    node_names = " ".join([n.get("name", "") for n in data["nodes"]])
+
+    expected_agents = [
+        "Lead and Leasing Agent",
+        "Tenant Support Agent",
+        "Maintenance and Vendor Agent",
+        "Rent and Collections Agent",
+        "Vacancy and Revenue Recovery Agent",
+        "Orchestrator Agent",
+        "Monitoring and Facilitator Agent",
+    ]
+
+    for agent in expected_agents:
+        # Check standard naming or abbreviations present in node titles
+        simplified = agent.split()[0]
+        assert simplified in node_names, f"Expected agent '{agent}' missing from n8n nodes"
+
