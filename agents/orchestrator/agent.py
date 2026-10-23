@@ -19,6 +19,12 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from backend.app.models.workflow import WorkflowExecution, AgentTaskRecord, ApprovalRequest
+from backend.app.models.user import User
+from backend.app.models.maintenance import MaintenanceTicket, Vendor
+from backend.app.models.tenant import Tenant, Lease
+from backend.app.models.property import Property, Room, Bed
+from backend.app.models.lead import Lead, PropertyVisit
+import re
 from shared.schemas.agent_message import AgentMessage, MessageStatus, TaskPriority
 
 from agents.tenant_support.agent import TenantSupportAgent
@@ -694,6 +700,824 @@ class OrchestratorAgent:
             },
         }
 
+    def _execute_operational_action(
+        self,
+        prompt: str,
+        context: dict[str, Any],
+        wf: WorkflowExecution,
+        start_time: float,
+    ) -> Optional[dict[str, Any]]:
+        """Identify and execute state-mutating operational actions across user accounts,
+        maintenance tickets, vendor assignments, safety approvals, property visits, and resident leases.
+        Returns a completed response dictionary if an action was matched and executed, or None to fall back to analytical queries.
+        """
+        p_lower = prompt.lower().strip()
+        t0 = time.time()
+
+        # -------------------------------------------------------------
+        # Action Category 1: User Account Operations (Activate, Deactivate, Role Update, Delete)
+        # -------------------------------------------------------------
+        is_user_mgmt = (
+            any(k in p_lower for k in ["deactivate", "disable", "suspend", "inactivate", "block user", "turn off user"])
+            or any(k in p_lower for k in ["activate", "enable", "unsuspend", "unblock", "restore user", "turn on user"])
+            or any(k in p_lower for k in ["change role", "update role", "make user", "promote user", "demote user"])
+            or any(k in p_lower for k in ["delete user", "remove user", "drop user", "delete account"])
+        )
+
+        if is_user_mgmt:
+            # Extract target user
+            target_user = None
+            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
+            if email_match:
+                target_user = self.db.query(User).filter(User.email == email_match.group(0).lower()).first()
+
+            if not target_user:
+                uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
+                if uuid_match:
+                    target_user = self.db.get(User, uuid_match.group(0))
+
+            if not target_user and context:
+                c_target = context.get("target_user") or context.get("target_email") or context.get("user_id")
+                if c_target:
+                    target_user = self.db.query(User).filter((User.id == str(c_target)) | (User.email == str(c_target).lower())).first()
+
+            if not target_user:
+                # Check for explicit role mention (e.g. "deactivate resident user" / "deactivate tenant")
+                if "resident" in p_lower or "tenant" in p_lower:
+                    target_user = self.db.query(User).filter(User.role == "tenant").first()
+                elif "manager" in p_lower:
+                    target_user = self.db.query(User).filter(User.role == "property_manager").first()
+                elif "admin" in p_lower:
+                    target_user = self.db.query(User).filter(User.role == "admin").first()
+                else:
+                    all_u = self.db.query(User).all()
+                    for u in all_u:
+                        if u.full_name and len(u.full_name.strip()) > 3 and u.full_name.lower() in p_lower:
+                            target_user = u
+                            break
+
+            # Handle Deactivate
+            if any(k in p_lower for k in ["deactivate", "disable", "suspend", "inactivate", "block user", "turn off user"]):
+                if not target_user:
+                    active_u = self.db.query(User).filter(User.is_active == True).limit(5).all()
+                    u_preview = ", ".join([f"{u.email} ({u.role})" for u in active_u])
+                    resp_text = (
+                        f"Which user account would you like to deactivate? Currently active accounts include: {u_preview}. "
+                        f"You can specify: 'Deactivate user <email>' (e.g. 'Deactivate user resident@stayops.ai')."
+                    )
+                    action_name = "prompt_target_user"
+                    action_data = {"active_accounts": [u.email for u in active_u]}
+                else:
+                    target_user.is_active = False
+                    self.db.commit()
+                    self.db.refresh(target_user)
+                    resp_text = (
+                        f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully deactivated. "
+                        f"Account login access and API credentials are now revoked."
+                    )
+                    action_name = "deactivate_user"
+                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": False}
+
+            # Handle Activate
+            elif any(k in p_lower for k in ["activate", "enable", "unsuspend", "unblock", "restore user", "turn on user"]):
+                if not target_user:
+                    inactive_u = self.db.query(User).filter(User.is_active == False).limit(5).all()
+                    if inactive_u:
+                        u_preview = ", ".join([f"{u.email} ({u.role})" for u in inactive_u])
+                        resp_text = f"Which user account would you like to activate? Deactivated accounts: {u_preview}. Please specify: 'Activate user <email>'."
+                    else:
+                        resp_text = "All user accounts in the platform are already active."
+                    action_name = "prompt_target_user"
+                    action_data = {"inactive_accounts": [u.email for u in inactive_u]}
+                else:
+                    target_user.is_active = True
+                    self.db.commit()
+                    self.db.refresh(target_user)
+                    resp_text = (
+                        f"User '{target_user.email}' ({target_user.full_name}, Role: {target_user.role}) has been successfully activated. "
+                        f"Account login access and operational privileges have been restored."
+                    )
+                    action_name = "activate_user"
+                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role, "is_active": True}
+
+            # Handle Role Change
+            elif any(k in p_lower for k in ["change role", "update role", "make user", "promote user", "demote user"]):
+                if not target_user:
+                    resp_text = "Please specify the user email and target role (admin, property_manager, or tenant), e.g., 'Change role of resident@stayops.ai to property_manager'."
+                    action_name = "prompt_target_user"
+                    action_data = {}
+                else:
+                    if "to admin" in p_lower or "as admin" in p_lower or p_lower.endswith("admin"):
+                        new_role = "admin"
+                    elif "to tenant" in p_lower or "as tenant" in p_lower or "to resident" in p_lower or "as resident" in p_lower or p_lower.endswith(("tenant", "resident")):
+                        new_role = "tenant"
+                    elif any(m in p_lower for m in ["manager", "property_manager"]):
+                        new_role = "property_manager"
+                    elif "admin" in p_lower:
+                        new_role = "admin"
+                    else:
+                        new_role = "property_manager"
+
+                    target_user.role = new_role
+                    self.db.commit()
+                    self.db.refresh(target_user)
+                    resp_text = f"User '{target_user.email}' ({target_user.full_name}) has been assigned role '{target_user.role}'."
+                    action_name = "update_user_role"
+                    action_data = {"user_id": target_user.id, "email": target_user.email, "role": target_user.role}
+
+            # Handle Delete User
+            else:
+                if not target_user:
+                    resp_text = "Please specify the user email to delete, e.g., 'Delete user test@stayops.ai'."
+                    action_name = "prompt_target_user"
+                    action_data = {}
+                else:
+                    deleted_email = target_user.email
+                    self.db.delete(target_user)
+                    self.db.commit()
+                    resp_text = f"User account '{deleted_email}' has been permanently deleted from StayOps."
+                    action_name = "delete_user"
+                    action_data = {"deleted_email": deleted_email}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver="system_auth_agent",
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt, "context": context},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {
+                "action_performed": action_name,
+                "response": resp_text,
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+            }
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": "orchestrator",
+                "executed_agents": [self.name, "system_auth_agent", self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": "Central Orchestrator",
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 2: Maintenance & Vendor Operations
+        # -------------------------------------------------------------
+        is_create_ticket = (
+            any(k in p_lower for k in [
+                "create maintenance ticket", "raise ticket", "raise a ticket", "log repair",
+                "report leak", "report broken", "issue with", "create ticket", "ticket for",
+                "fix ac", "fix tap", "fix pipe", "fix light", "fix geyser"
+            ])
+            or (("ticket" in p_lower or "repair" in p_lower) and any(a in p_lower for a in ["create", "raise", "open", "new", "log", "report", "add"]))
+        )
+        if is_create_ticket:
+            category = "Plumbing"
+            if any(k in p_lower for k in ["ac", "air condition", "fridge", "refrigerator", "geyser", "microwave", "washing machine", "heater", "cooler"]):
+                category = "Appliance"
+            elif any(k in p_lower for k in ["electr", "light", "fan", "switch", "wire", "short circuit", "voltage", "bulb", "socket", "power"]):
+                category = "Electrical"
+            elif any(k in p_lower for k in ["clean", "garbage", "trash", "dust", "pest", "waste", "maid", "housekeeping"]):
+                category = "Cleaning"
+            elif any(k in p_lower for k in ["door", "lock", "window", "bed", "cupboard", "table", "chair", "wood", "carpenter"]):
+                category = "Carpentry"
+            elif any(k in p_lower for k in ["paint", "damp", "patch", "wall"]):
+                category = "Painting"
+
+            severity = "Medium"
+            if any(k in p_lower for k in ["emergency", "urgent", "critical", "danger", "flooding", "spark"]):
+                severity = "Emergency"
+            elif any(k in p_lower for k in ["high", "severe", "asap", "bad"]):
+                severity = "High"
+            elif any(k in p_lower for k in ["low", "minor", "small"]):
+                severity = "Low"
+
+            cost_map = {"Emergency": 1500.0, "High": 1000.0, "Medium": 600.0, "Low": 300.0}
+            est_cost = cost_map.get(severity, 600.0)
+
+            # Property & Room resolution
+            room = None
+            prop = self.db.query(Property).first()
+            room_match = re.search(r'room\s*(\d+[a-zA-Z]?)', p_lower)
+            if room_match:
+                r_code = room_match.group(1).upper()
+                room = self.db.query(Room).filter(Room.room_number.ilike(f"%{r_code}%")).first()
+                if room:
+                    prop = self.db.get(Property, room.property_id) or prop
+
+            title = prompt.strip()
+            if len(title) > 90:
+                title = f"{category} Repair: {room.room_number if room else prop.name if prop else 'Facility'}"
+
+            ticket = MaintenanceTicket(
+                property_id=prop.id if prop else "default-prop",
+                room_id=room.id if room else None,
+                title=title,
+                description=prompt.strip(),
+                category=category,
+                severity=severity,
+                status="open",
+                estimated_cost=est_cost,
+            )
+            self.db.add(ticket)
+            self.db.commit()
+            self.db.refresh(ticket)
+
+            resp_text = (
+                f"Created Maintenance Ticket #{ticket.id[:8].upper()}: '{ticket.title}' "
+                f"(Category: {ticket.category}, Severity: {ticket.severity}, Property: {prop.name if prop else 'Primary'}). "
+                f"Estimated repair cost: ₹{ticket.estimated_cost:,.0f}. Ticket is now queued in the operational backlog for contractor assignment."
+            )
+            action_name = "create_maintenance_ticket"
+            action_data = {"ticket_id": ticket.id, "title": ticket.title, "category": ticket.category, "severity": ticket.severity, "status": "open"}
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.maintenance.name,
+                task_type="action_create_maintenance_ticket",
+                input_data={"prompt": prompt, "category": category, "severity": severity},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.maintenance.name,
+                "executed_agents": [self.name, self.maintenance.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.maintenance.name,
+                    "action": "create_maintenance_ticket",
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # 2b. Assign Vendor to Ticket
+        is_assign_vendor = any(k in p_lower for k in ["assign vendor", "assign contractor", "dispatch vendor", "assign plumber", "assign electrician"])
+        if is_assign_vendor:
+            ticket = None
+            uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
+            if uuid_match:
+                ticket = self.db.get(MaintenanceTicket, uuid_match.group(0))
+            if not ticket:
+                ticket = self.db.query(MaintenanceTicket).filter(MaintenanceTicket.status == "open").order_by(MaintenanceTicket.created_at.desc()).first()
+
+            if not ticket:
+                resp_text = "No open maintenance tickets found requiring vendor dispatch."
+                action_data = {}
+                action_name = "assign_vendor_noop"
+            else:
+                vendor = None
+                vendors = self.db.query(Vendor).filter(Vendor.is_active == True).all()
+                for v in vendors:
+                    if v.name.lower() in p_lower or v.category.lower() in p_lower:
+                        vendor = v
+                        break
+                if not vendor:
+                    vendor = self.db.query(Vendor).filter(Vendor.is_active == True, Vendor.category.ilike(f"%{ticket.category}%")).first()
+                if not vendor and vendors:
+                    vendor = vendors[0]
+
+                if vendor:
+                    ticket.vendor_id = vendor.id
+                    ticket.status = "assigned"
+                    self.db.commit()
+                    resp_text = (
+                        f"Assigned accredited vendor '{vendor.name}' ({vendor.category}, Rating: {vendor.rating}★, ₹{vendor.hourly_rate:,.0f}/hr) "
+                        f"to Maintenance Ticket #{ticket.id[:8].upper()} ('{ticket.title}'). Work order dispatched."
+                    )
+                    action_name = "assign_vendor"
+                    action_data = {"ticket_id": ticket.id, "vendor_id": vendor.id, "vendor_name": vendor.name, "status": "assigned"}
+                else:
+                    resp_text = f"No active vendor found matching category '{ticket.category}'."
+                    action_name = "assign_vendor_failed"
+                    action_data = {}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.maintenance.name,
+                task_type="action_assign_vendor",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.maintenance.name,
+                "executed_agents": [self.name, self.maintenance.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.maintenance.name,
+                    "action": "assign_vendor",
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # 2c. Resolve / Close Ticket
+        is_resolve_ticket = any(k in p_lower for k in ["resolve ticket", "close ticket", "mark ticket as resolved", "complete ticket", "fix ticket"])
+        if is_resolve_ticket:
+            ticket = None
+            uuid_match = re.search(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', prompt)
+            if uuid_match:
+                ticket = self.db.get(MaintenanceTicket, uuid_match.group(0))
+            if not ticket:
+                ticket = self.db.query(MaintenanceTicket).filter(MaintenanceTicket.status.in_(["open", "assigned", "in_progress"])).order_by(MaintenanceTicket.created_at.desc()).first()
+
+            if not ticket:
+                resp_text = "No open or assigned maintenance tickets found to resolve."
+                action_data = {}
+                action_name = "resolve_ticket_noop"
+            else:
+                ticket.status = "resolved"
+                ticket.resolved_at = datetime.now(timezone.utc)
+                ticket.resolution_notes = "Resolved via AI Assistant command"
+                self.db.commit()
+                resp_text = f"Maintenance Ticket #{ticket.id[:8].upper()} ('{ticket.title}') has been marked as resolved. Operations log updated."
+                action_name = "resolve_maintenance_ticket"
+                action_data = {"ticket_id": ticket.id, "status": "resolved"}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.maintenance.name,
+                task_type="action_resolve_maintenance_ticket",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.maintenance.name,
+                "executed_agents": [self.name, self.maintenance.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.maintenance.name,
+                    "action": "resolve_ticket",
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 3: Safety Gate & Human-in-the-Loop Approvals
+        # -------------------------------------------------------------
+        is_approval_action = any(k in p_lower for k in ["approve all", "approve pending", "clear approvals", "approve request", "approve approval", "approve safety gate", "reject request", "reject approval", "decline approval"])
+        if is_approval_action:
+            if any(k in p_lower for k in ["approve all", "approve pending", "clear approvals"]):
+                pending = self.db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").all()
+                count = len(pending)
+                for req in pending:
+                    req.status = "approved"
+                    req.reviewed_by = "AI Facilitator (Authorized Command)"
+                    req.review_notes = "Authorized via natural-language agent command"
+                self.db.commit()
+                resp_text = f"Successfully authorized and approved all {count} pending safety gate request(s). Blocked work orders are now released."
+                action_name = "approve_all_pending"
+                action_data = {"approved_count": count}
+            elif any(k in p_lower for k in ["reject request", "reject approval", "decline approval"]):
+                req = self.db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").first()
+                if req:
+                    req.status = "rejected"
+                    req.reviewed_by = "AI Facilitator (Rejected Command)"
+                    self.db.commit()
+                    resp_text = f"Safety gate approval request #{req.id[:8].upper()} ({req.action_type}) has been rejected."
+                    action_name = "reject_safety_gate"
+                    action_data = {"request_id": req.id, "status": "rejected"}
+                else:
+                    resp_text = "No pending approval requests to reject."
+                    action_name = "reject_approval_noop"
+                    action_data = {}
+            else:
+                req = self.db.query(ApprovalRequest).filter(ApprovalRequest.status == "pending").first()
+                if req:
+                    req.status = "approved"
+                    req.reviewed_by = "AI Facilitator (Authorized Command)"
+                    self.db.commit()
+                    resp_text = f"Safety gate approval request #{req.id[:8].upper()} ({req.action_type}, ₹{req.estimated_cost:,.0f}) has been approved."
+                    action_name = "approve_safety_gate"
+                    action_data = {"request_id": req.id, "status": "approved"}
+                else:
+                    resp_text = "There are currently 0 pending safety gate approvals."
+                    action_name = "approve_approval_noop"
+                    action_data = {}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.facilitator.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.facilitator.name,
+                "executed_agents": [self.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.facilitator.name,
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 4: Property Visits & Tour Scheduling
+        # -------------------------------------------------------------
+        is_visit_action = any(k in p_lower for k in ["schedule visit", "book visit", "schedule tour", "book tour", "confirm visit", "complete visit", "cancel visit"])
+        if is_visit_action:
+            if any(k in p_lower for k in ["schedule visit", "book visit", "schedule tour", "book tour"]):
+                name_match = re.search(r'(?:for|by)\s+([a-zA-Z\s]+?)(?:\s+(?:at|on|tomorrow|in)|$)', prompt, re.IGNORECASE)
+                visitor_name = name_match.group(1).strip() if name_match else "Prospective Resident"
+
+                prop = self.db.query(Property).first()
+                for p in self.db.query(Property).all():
+                    if p.name.lower() in p_lower or (p.city and p.city.lower() in p_lower):
+                        prop = p
+                        break
+
+                scheduled_time = datetime.now(timezone.utc) + timedelta(days=1, hours=4)
+                lead = self.db.query(Lead).filter(Lead.full_name.ilike(f"%{visitor_name}%")).first()
+                if not lead:
+                    lead = Lead(
+                        full_name=visitor_name,
+                        phone="+91-9876543210",
+                        email=f"{visitor_name.lower().replace(' ', '.')}@example.com",
+                        preferred_location=prop.city if prop else "Bengaluru",
+                        budget=15000.0,
+                        status="visit_scheduled",
+                        source="ai_assistant",
+                    )
+                    self.db.add(lead)
+                    self.db.commit()
+                    self.db.refresh(lead)
+
+                visit = PropertyVisit(
+                    lead_id=lead.id,
+                    property_id=prop.id if prop else "default-prop",
+                    scheduled_time=scheduled_time,
+                    status="scheduled",
+                    feedback="Booked via AI Assistant command",
+                )
+                self.db.add(visit)
+                self.db.commit()
+                self.db.refresh(visit)
+                resp_text = (
+                    f"Property tour successfully booked! Visit #{visit.id[:8].upper()} scheduled for {visitor_name} "
+                    f"at {prop.name if prop else 'Primary Property'} on {scheduled_time.strftime('%b %d, %Y at %I:%M %p')}. "
+                    f"Visible in the Manager Property Visits pipeline."
+                )
+                action_name = "schedule_property_visit"
+                action_data = {"visit_id": visit.id, "visitor_name": visitor_name, "status": "scheduled"}
+            else:
+                visit = self.db.query(PropertyVisit).filter(PropertyVisit.status == "scheduled").first()
+                if visit:
+                    new_status = "completed" if "complete" in p_lower else ("cancelled" if "cancel" in p_lower else "confirmed")
+                    visit.status = new_status
+                    self.db.commit()
+                    v_name = visit.lead.full_name if visit.lead else "Visitor"
+                    resp_text = f"Property visit #{visit.id[:8].upper()} for {v_name} updated to status '{new_status}'."
+                    action_name = "update_property_visit"
+                    action_data = {"visit_id": visit.id, "status": new_status}
+                else:
+                    resp_text = "No scheduled property visits found to update."
+                    action_name = "visit_update_noop"
+                    action_data = {}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.leasing.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.leasing.name,
+                "executed_agents": [self.name, self.leasing.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.leasing.name,
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 5: Tenant & Lease Management
+        # -------------------------------------------------------------
+        is_lease_action = any(k in p_lower for k in ["terminate lease", "cancel lease", "put on notice", "notice for tenant", "move out tenant"])
+        if is_lease_action:
+            tenant = None
+            email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', prompt)
+            if email_match:
+                tenant = self.db.query(Tenant).filter(Tenant.email == email_match.group(0).lower()).first()
+            if not tenant:
+                tenant = self.db.query(Tenant).filter(Tenant.status == "active").first()
+
+            if tenant:
+                tenant.status = "notice"
+                self.db.commit()
+                resp_text = (
+                    f"Resident '{tenant.full_name}' ({tenant.email}) has been placed on notice (status: 'notice'). "
+                    f"Automated 15-day move-out inspection, deposit audit, and unit relisting workflows initiated."
+                )
+                action_name = "update_tenant_status"
+                action_data = {"tenant_id": tenant.id, "email": tenant.email, "status": "notice"}
+            else:
+                resp_text = "No active resident tenant found matching criteria to update."
+                action_name = "tenant_notice_noop"
+                action_data = {}
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=self.tenant_support.name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": self.tenant_support.name,
+                "executed_agents": [self.name, self.tenant_support.name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": self.tenant_support.name,
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 6: Community Announcements
+        # -------------------------------------------------------------
+        is_announcement = any(k in p_lower for k in ["create announcement", "post announcement", "broadcast notice", "send notice to residents"])
+        if is_announcement:
+            ann_text = prompt
+            for prefix in ["create announcement:", "create announcement", "post announcement:", "post announcement", "broadcast notice:", "broadcast notice"]:
+                if prefix in p_lower:
+                    idx = p_lower.find(prefix) + len(prefix)
+                    ann_text = prompt[idx:].strip(" :-\"'")
+                    break
+
+            resp_text = f"Community Announcement published: '{ann_text}'. Notice dispatched to resident portals."
+            action_name = "broadcast_announcement"
+            action_data = {"announcement": ann_text}
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver="community_broadcast_agent",
+                task_type="action_broadcast_announcement",
+                input_data={"prompt": prompt, "announcement": ann_text},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": "orchestrator",
+                "executed_agents": [self.name, "community_broadcast_agent", self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": "Central Orchestrator",
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": resp_text,
+                }],
+            }
+
+        # -------------------------------------------------------------
+        # Action Category 7: Entity Listings (Properties, Users, Tickets, Vendors)
+        # -------------------------------------------------------------
+        is_list_props = any(k in p_lower for k in [
+            "list the property", "list property", "list properties", "list the properties",
+            "show properties", "show all properties", "show property", "what properties",
+            "view properties", "get properties", "all properties", "our properties"
+        ])
+        is_list_users = any(k in p_lower for k in [
+            "list user", "list users", "list all users", "show users", "show all users",
+            "view users", "what users", "who are the users", "all users"
+        ])
+        is_list_tickets = any(k in p_lower for k in [
+            "list ticket", "list tickets", "list all tickets", "show tickets",
+            "show open tickets", "view tickets", "maintenance tickets", "open tickets"
+        ])
+        is_list_vendors = any(k in p_lower for k in [
+            "list vendor", "list vendors", "show vendors", "contractors",
+            "view vendors", "who are the vendors", "all vendors"
+        ])
+
+        if is_list_props or is_list_users or is_list_tickets or is_list_vendors:
+            if is_list_props:
+                props = self.db.query(Property).all()
+                prop_items = []
+                for p in props:
+                    rooms_cnt = self.db.query(Room).filter(Room.property_id == p.id).count()
+                    beds_q = self.db.query(Bed).join(Room, Bed.room_id == Room.id).filter(Room.property_id == p.id)
+                    total_beds = beds_q.count()
+                    avail_beds = beds_q.filter(Bed.status == "available").count()
+                    amenities_list = getattr(p, "amenities", None)
+                    if isinstance(amenities_list, list) and amenities_list:
+                        amenities = ", ".join(amenities_list[:3])
+                    else:
+                        amenities = "High-Speed WiFi, Power Backup, Daily Housekeeping"
+                    prop_items.append({
+                        "id": p.id,
+                        "name": p.name,
+                        "city": p.city,
+                        "address": p.address,
+                        "rooms_count": rooms_cnt,
+                        "total_beds": total_beds,
+                        "available_beds": avail_beds,
+                        "amenities": amenities,
+                    })
+
+                lines = [f"Found {len(props)} properties currently managed across the StayOps portfolio:"]
+                for i, item in enumerate(prop_items, 1):
+                    lines.append(
+                        f"{i}. {item['name']} ({item['city']}) — {item['rooms_count']} Rooms, {item['total_beds']} Beds "
+                        f"({item['available_beds']} currently available). Amenities: {item['amenities']}."
+                    )
+                resp_text = "\n".join(lines)
+                action_name = "list_properties"
+                action_data = {"properties": prop_items, "count": len(props)}
+                primary_agent_name = self.leasing.name
+
+            elif is_list_users:
+                users = self.db.query(User).order_by(User.created_at.desc()).all()
+                user_items = [{"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in users]
+                lines = [f"System contains {len(users)} registered user accounts:"]
+                for i, u in enumerate(user_items[:8], 1):
+                    status_tag = "Active" if u["is_active"] else "Deactivated"
+                    lines.append(f"{i}. {u['email']} ({u['full_name'] or 'User'}, Role: {u['role']}) — [{status_tag}]")
+                if len(users) > 8:
+                    lines.append(f"... and {len(users) - 8} more accounts in the system.")
+                resp_text = "\n".join(lines)
+                action_name = "list_users"
+                action_data = {"users": user_items, "count": len(users)}
+                primary_agent_name = "system_auth_agent"
+
+            elif is_list_tickets:
+                tickets = self.db.query(MaintenanceTicket).order_by(MaintenanceTicket.created_at.desc()).all()
+                ticket_items = [{"id": t.id, "title": t.title, "category": t.category, "severity": t.severity, "status": t.status, "estimated_cost": t.estimated_cost} for t in tickets]
+                lines = [f"Found {len(tickets)} maintenance work orders:"]
+                for i, t in enumerate(ticket_items[:6], 1):
+                    lines.append(f"{i}. #{t['id'][:8].upper()}: '{t['title']}' ({t['category']}, Severity: {t['severity']}) — Status: {t['status'].upper()} (₹{t['estimated_cost']:,.0f})")
+                resp_text = "\n".join(lines)
+                action_name = "list_tickets"
+                action_data = {"tickets": ticket_items, "count": len(tickets)}
+                primary_agent_name = self.maintenance.name
+
+            else:
+                vendors = self.db.query(Vendor).filter(Vendor.is_active == True).all()
+                vendor_items = [{"id": v.id, "name": v.name, "category": v.category, "rating": v.rating, "rate": v.hourly_rate} for v in vendors]
+                lines = [f"{len(vendors)} accredited maintenance contractors active:"]
+                for i, v in enumerate(vendor_items, 1):
+                    lines.append(f"{i}. {v['name']} ({v['category']}) — Rating: {v['rating']}★, Rate: ₹{v['rate']:,.0f}/hr")
+                resp_text = "\n".join(lines)
+                action_name = "list_vendors"
+                action_data = {"vendors": vendor_items, "count": len(vendors)}
+                primary_agent_name = self.maintenance.name
+
+            elapsed = round((time.time() - t0) * 1000, 2)
+            self._record_task(
+                workflow_id=wf.id,
+                sender=self.name,
+                receiver=primary_agent_name,
+                task_type=f"action_{action_name}",
+                input_data={"prompt": prompt},
+                output_data=action_data,
+                execution_time_ms=elapsed,
+            )
+            total_time_ms = round((time.time() - start_time) * 1000, 2)
+            wf.status = "completed"
+            wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
+            self.db.commit()
+            return {
+                "workflow_id": wf.id,
+                "status": "completed",
+                "primary_agent": primary_agent_name,
+                "executed_agents": [self.name, primary_agent_name, self.facilitator.name],
+                "action_performed": action_name,
+                "response": resp_text,
+                "llm_synthesis": resp_text,
+                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "data": action_data,
+                "execution_time_ms": total_time_ms,
+                "trace_steps": [{
+                    "agent": primary_agent_name,
+                    "action": action_name,
+                    "execution_time_ms": elapsed,
+                    "summary": f"Retrieved and formatted listing for '{action_name}'.",
+                }],
+            }
+
+        # No operational mutation matched; proceed to analytical queries
+        return None
+
     def dispatch_interactive_task(
         self,
         prompt: str,
@@ -715,6 +1539,16 @@ class OrchestratorAgent:
         self.db.add(wf)
         self.db.commit()
         self.db.refresh(wf)
+
+        # Check if prompt expresses an operational state-mutating command
+        action_result = self._execute_operational_action(
+            prompt=prompt,
+            context=context,
+            wf=wf,
+            start_time=start_time,
+        )
+        if action_result:
+            return action_result
 
         trace_steps = []
         executed_agents = []

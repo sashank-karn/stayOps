@@ -623,6 +623,7 @@ class AgentDispatchTaskResponse(BaseModel):
     llm_synthesis: Optional[str] = None
     llm_attribution: Optional[dict[str, Any]] = None
     data: Optional[dict[str, Any]] = None
+    action_performed: Optional[str] = None
     execution_time_ms: float
     trace_steps: List[dict[str, Any]] = Field(default_factory=list)
 
