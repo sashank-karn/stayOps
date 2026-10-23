@@ -2621,8 +2621,12 @@ def get_integrations_status():
         vector_ready = False
 
     email_smtp_ready = bool(
-        (getattr(settings, "smtp_user", "") or os.getenv("SMTP_USER"))
-        and (getattr(settings, "smtp_pass", "") or getattr(settings, "smtp_password", "") or os.getenv("SMTP_PASS"))
+        (getattr(settings, "brevo_api_key", "") or os.getenv("BREVO_API_KEY"))
+        or (getattr(settings, "resend_api_key", "") or os.getenv("RESEND_API_KEY"))
+        or (
+            (getattr(settings, "smtp_user", "") or os.getenv("SMTP_USER"))
+            and (getattr(settings, "smtp_pass", "") or getattr(settings, "smtp_password", "") or os.getenv("SMTP_PASS"))
+        )
     )
     calendar_ready = bool(
         getattr(settings, "google_calendar_client_id", "") and getattr(settings, "google_calendar_client_secret", "")
