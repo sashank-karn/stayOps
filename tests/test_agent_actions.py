@@ -267,3 +267,22 @@ def test_agent_rbac_tenant_permission_denied(db_session):
     assert tour_res["action_performed"] == "schedule_property_visit"
 
 
+def test_agent_viman_nagar_bed_allocation_and_safety_approvals(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+
+    # 1. Test allocating a bed in Viman Nagar flat with budget
+    alloc_res = orchestrator.dispatch_interactive_task(
+        "allocate a bed in vimangar flat with single bed room of 20000"
+    )
+    assert alloc_res["action_performed"] == "create_lease_agreement"
+    assert "Viman Nagar" in alloc_res["response"]
+    assert "Lease agreement successfully created" in alloc_res["response"]
+    assert alloc_res["data"]["monthly_rent"] <= 20000
+
+    # 2. Test checking pending safety approvals
+    safety_res = orchestrator.dispatch_interactive_task("Check pending safety approvals")
+    assert safety_res["action_performed"] == "list_approvals"
+    assert "safety" in safety_res["response"].lower()
+
+
+
