@@ -14,6 +14,7 @@ class User(Base, UUIDMixin, TimestampMixin):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
+    phone = Column(String(50), nullable=True, default="")
     role = Column(String(50), nullable=False, default="property_manager")  # admin, property_manager, tenant
     is_active = Column(Boolean, default=True, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)

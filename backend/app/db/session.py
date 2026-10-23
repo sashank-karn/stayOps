@@ -29,11 +29,20 @@ else:
         "pool_recycle": 300,  # Recycle connections after 5 mins to handle cloud idle drops
     })
 
-engine = create_engine(
-    db_url,
-    connect_args=connect_args,
-    **engine_kwargs,
-)
+try:
+    engine = create_engine(
+        db_url,
+        connect_args=connect_args,
+        **engine_kwargs,
+    )
+    if not db_url.startswith("sqlite"):
+        with engine.connect() as _test_conn:
+            pass
+except Exception as _conn_err:
+    import logging
+    _logger = logging.getLogger(__name__)
+    _logger.warning("Primary database connection failed (%s); activating local sqlite:///./stayops.db fallback.", _conn_err)
+    engine = create_engine("sqlite:///./stayops.db", connect_args={"check_same_thread": False}, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -47,8 +47,11 @@ def on_startup():
                     cols = [r[1] for r in conn.execute(text("PRAGMA table_info(users)")).fetchall()]
                     if cols and "is_verified" not in cols:
                         conn.execute(text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT 1"))
+                    if cols and "phone" not in cols:
+                        conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(50) DEFAULT ''"))
                 else:
                     conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT TRUE"))
+                    conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''"))
             except Exception as mig_err:
                 import logging
                 logging.getLogger(__name__).debug("Column migration note: %s", mig_err)

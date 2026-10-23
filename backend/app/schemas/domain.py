@@ -475,6 +475,49 @@ class OTPResponse(BaseModel):
     dev_otp: Optional[str] = None
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    otp: str = Field(..., min_length=4, max_length=10)
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: str) -> str:
+        res = validate_email_str(v)
+        if not res:
+            raise ValueError("Valid email is required.")
+        return res
+
+
+class UserProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def check_email(cls, v: Optional[str]) -> Optional[str]:
+        return validate_email_str(v)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def check_phone(cls, v: Optional[str]) -> Optional[str]:
+        return validate_phone_str(v)
+
+
 class UserLoginRequest(BaseModel):
     email: str
     password: str

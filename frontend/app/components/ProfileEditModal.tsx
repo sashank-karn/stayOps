@@ -27,6 +27,7 @@ export default function ProfileEditModal({
   onProfileUpdated,
 }: ProfileEditModalProps) {
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -38,6 +39,7 @@ export default function ProfileEditModal({
   useEffect(() => {
     if (currentUser && isOpen) {
       setFullName(currentUser.full_name || "");
+      setEmail(currentUser.email || "");
       setPhone(currentUser.phone || "");
       setNewPassword("");
       setConfirmPassword("");
@@ -55,6 +57,11 @@ export default function ProfileEditModal({
 
     if (!fullName.trim()) {
       setErrorMsg("Full name is required.");
+      return;
+    }
+
+    if (!email.trim()) {
+      setErrorMsg("Email address is required.");
       return;
     }
 
@@ -79,6 +86,7 @@ export default function ProfileEditModal({
         },
         body: JSON.stringify({
           full_name: fullName.trim(),
+          email: email.trim().toLowerCase(),
           phone: phone.trim() || undefined,
           password: newPassword.trim() || undefined,
         }),
@@ -273,6 +281,36 @@ export default function ProfileEditModal({
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. Sashank Karn"
+              style={{
+                width: "100%",
+                padding: "9px 12px",
+                borderRadius: 8,
+                border: "1px solid #cbd5e1",
+                fontSize: 14,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#334155",
+                marginBottom: 6,
+              }}
+            >
+              Email Address *
+            </label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="e.g. contact@sashankkarn.com.np"
               style={{
                 width: "100%",
                 padding: "9px 12px",

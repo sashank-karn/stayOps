@@ -61,6 +61,9 @@ from backend.app.schemas.domain import (
     UserRegisterRequest,
     SendOTPRequest,
     VerifyOTPRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    UserProfileUpdateRequest,
     OTPResponse,
     UserLoginRequest,
     TokenResponse,
@@ -994,7 +997,129 @@ def get_current_user_profile(
         "full_name": current_user.full_name,
         "role": current_user.role,
         "is_verified": bool(current_user.is_verified),
+        "phone": getattr(current_user, "phone", "") or "",
         "authenticated": True,
+    }
+
+
+@router.post("/auth/forgot-password", response_model=OTPResponse)
+def forgot_password_request(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Generate and dispatch a 6-digit password reset verification code to registered email.
+    """
+    normalized_email = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="No account registered with this email address. Please check your spelling or register.",
+        )
+
+    code, _ = create_and_send_otp(db, normalized_email, purpose="password_reset")
+    return {
+        "success": True,
+        "message": f"A 6-digit password reset verification code has been dispatched to {payload.email}.",
+        "email": payload.email,
+        "expires_in_seconds": 1200,
+        "dev_otp": None,
+    }
+
+
+@router.post("/auth/reset-password", response_model=OTPResponse)
+def reset_password_with_otp(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Verify the 6-digit OTP code and update the user's password securely.
+    """
+    normalized_email = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == normalized_email).first()
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="No account found with this email address.",
+        )
+
+    valid_otp, msg = verify_otp_code(db, normalized_email, payload.otp, purpose="password_reset")
+    if not valid_otp:
+        raise HTTPException(status_code=400, detail=f"Password reset failed: {msg}")
+
+    user.hashed_password = hash_password(payload.new_password)
+    user.is_verified = True
+    db.commit()
+    db.refresh(user)
+
+    logger.info("[StayOps Security] Successfully reset password for user %s (%s)", user.id, user.email)
+    return {
+        "success": True,
+        "message": "Your password has been successfully updated. You may now sign in with your new credentials.",
+        "email": payload.email,
+        "expires_in_seconds": 0,
+        "dev_otp": None,
+    }
+
+
+@router.put("/users/{user_id}/profile")
+def update_user_profile(
+    user_id: str,
+    payload: UserProfileUpdateRequest,
+    current_user: Optional[User] = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update user profile details (full name, email, phone number, password).
+    Supports updating by user UUID, email address, or current session ('me').
+    """
+    target_user = None
+    if user_id.lower() == "me":
+        target_user = current_user or db.query(User).first()
+    else:
+        target_user = db.query(User).filter(User.id == user_id).first()
+        if not target_user:
+            target_user = db.query(User).filter(User.email == user_id.strip().lower()).first()
+
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Update full name
+    if payload.full_name and payload.full_name.strip():
+        target_user.full_name = payload.full_name.strip()
+
+    # Update email address
+    if payload.email and payload.email.strip():
+        new_email = payload.email.strip().lower()
+        if new_email != target_user.email:
+            existing = db.query(User).filter(User.email == new_email, User.id != target_user.id).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="This email address is already in use by another account.")
+            target_user.email = new_email
+            # Also sync with associated Tenant record if present
+            associated_tenant = db.query(Tenant).filter(Tenant.user_id == target_user.id).first()
+            if associated_tenant:
+                associated_tenant.email = new_email
+
+    # Update phone
+    if payload.phone is not None:
+        new_phone = payload.phone.strip()
+        if hasattr(target_user, "phone"):
+            target_user.phone = new_phone
+        associated_tenant = db.query(Tenant).filter(Tenant.user_id == target_user.id).first()
+        if associated_tenant and new_phone:
+            associated_tenant.phone = new_phone
+
+    # Update password if provided
+    if payload.password and len(payload.password.strip()) >= 6:
+        target_user.hashed_password = hash_password(payload.password.strip())
+
+    db.commit()
+    db.refresh(target_user)
+
+    logger.info("[StayOps Security] Successfully updated profile for user %s (%s)", target_user.id, target_user.email)
+    return {
+        "id": target_user.id,
+        "email": target_user.email,
+        "full_name": target_user.full_name,
+        "phone": getattr(target_user, "phone", "") or "",
+        "role": target_user.role,
+        "is_verified": bool(target_user.is_verified),
     }
 
 

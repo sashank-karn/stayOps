@@ -31,11 +31,13 @@ function BrandMark() {
 
 export default function LoginPage() {
   const router = useRouter();
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authFullName, setAuthFullName] = useState("");
   const [authRole, setAuthRole] = useState("property_manager");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authSuccessNotice, setAuthSuccessNotice] = useState("");
   const [authOtp, setAuthOtp] = useState("");
@@ -87,7 +89,7 @@ export default function LoginPage() {
         localStorage.setItem("stayops_user", JSON.stringify(data.user));
         localStorage.setItem("stayops_token", data.access_token);
         routeByRole(data.user);
-      } else {
+      } else if (authMode === "register") {
         // Registration flow
         if (authStep === "details") {
           const otpRes = await fetch(`${API_URL}/api/auth/send-otp`, {
@@ -134,6 +136,82 @@ export default function LoginPage() {
           localStorage.setItem("stayops_token", vData.access_token);
           routeByRole(vData.user);
         }
+      } else if (authMode === "forgot") {
+        // Forgot password flow
+        if (authStep === "details") {
+          if (!authEmail.trim()) {
+            throw new Error("Please enter your registered email address.");
+          }
+          const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: authEmail.trim().toLowerCase(),
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "Unable to send password reset code. Please check your email.");
+          }
+
+          setAuthStep("otp");
+          setOtpCountdown(60);
+          setAuthOtp("");
+          setResetNewPassword("");
+          setResetConfirmPassword("");
+          setAuthSuccessNotice(`Password reset code sent to ${authEmail}. Please check your inbox.`);
+        } else {
+          // Verify OTP & Reset Password
+          const cleanedOtp = authOtp.trim();
+          if (cleanedOtp.length !== 6) {
+            throw new Error("Please enter all 6 digits of the verification code.");
+          }
+          if (!resetNewPassword || resetNewPassword.length < 6) {
+            throw new Error("New password must be at least 6 characters long.");
+          }
+          if (resetNewPassword !== resetConfirmPassword) {
+            throw new Error("Passwords do not match.");
+          }
+
+          const res = await fetch(`${API_URL}/api/auth/reset-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: authEmail.trim().toLowerCase(),
+              otp: cleanedOtp,
+              new_password: resetNewPassword,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "Password reset failed. The code may be incorrect or expired.");
+          }
+
+          // Automatically sign in the user with the new password
+          try {
+            const loginRes = await fetch(`${API_URL}/api/auth/login`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: authEmail.trim().toLowerCase(),
+                password: resetNewPassword,
+              }),
+            });
+            const loginData = await loginRes.json();
+            if (loginRes.ok && loginData.access_token) {
+              localStorage.setItem("stayops_user", JSON.stringify(loginData.user));
+              localStorage.setItem("stayops_token", loginData.access_token);
+              routeByRole(loginData.user);
+              return;
+            }
+          } catch {}
+
+          // Fallback if auto-login fails
+          setAuthSuccessNotice("Password reset successfully! Please sign in with your new password.");
+          setAuthMode("login");
+          setAuthStep("details");
+          setAuthPassword(resetNewPassword);
+        }
       }
     } catch (err: any) {
       setAuthError(err.message || "An unexpected error occurred. Please try again.");
@@ -148,15 +226,20 @@ export default function LoginPage() {
     setAuthError("");
     setAuthSuccessNotice("");
     try {
-      const otpRes = await fetch(`${API_URL}/api/auth/send-otp`, {
+      const endpoint = authMode === "forgot" ? `${API_URL}/api/auth/forgot-password` : `${API_URL}/api/auth/send-otp`;
+      const bodyPayload = authMode === "forgot"
+        ? { email: authEmail.trim().toLowerCase() }
+        : {
+            email: authEmail.trim().toLowerCase(),
+            full_name: authFullName.trim(),
+            role: authRole,
+            purpose: "registration",
+          };
+
+      const otpRes = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: authEmail.trim().toLowerCase(),
-          full_name: authFullName.trim(),
-          role: authRole,
-          purpose: "registration",
-        }),
+        body: JSON.stringify(bodyPayload),
       });
       const otpData = await otpRes.json();
       if (!otpRes.ok) {
@@ -239,64 +322,101 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            background: "#f3f4f6",
-            borderRadius: 8,
-            padding: 3,
-            marginBottom: 20,
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode("login");
-              setAuthStep("details");
-              setAuthError("");
-              setAuthSuccessNotice("");
-            }}
+        {/* Tab Switcher / Forgot Header */}
+        {authMode === "forgot" ? (
+          <div
             style={{
-              padding: "7px 0",
-              fontSize: 13,
-              fontWeight: 600,
-              borderRadius: 6,
-              border: "none",
-              cursor: "pointer",
-              background: authMode === "login" ? "#ffffff" : "transparent",
-              color: authMode === "login" ? "#111827" : "#6b7280",
-              boxShadow: authMode === "login" ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
-              transition: "all 0.15s ease",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 20,
+              paddingBottom: 10,
+              borderBottom: "1px solid #f3f4f6",
             }}
           >
-            Sign In
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setAuthMode("register");
-              setAuthStep("details");
-              setAuthError("");
-              setAuthSuccessNotice("");
-            }}
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthStep("details");
+                setAuthError("");
+                setAuthSuccessNotice("");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#2563eb",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              ← Back to Sign In
+            </button>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>
+              Forgot Password
+            </span>
+          </div>
+        ) : (
+          <div
             style={{
-              padding: "7px 0",
-              fontSize: 13,
-              fontWeight: 600,
-              borderRadius: 6,
-              border: "none",
-              cursor: "pointer",
-              background: authMode === "register" ? "#ffffff" : "transparent",
-              color: authMode === "register" ? "#111827" : "#6b7280",
-              boxShadow: authMode === "register" ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
-              transition: "all 0.15s ease",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              background: "#f3f4f6",
+              borderRadius: 8,
+              padding: 3,
+              marginBottom: 20,
             }}
           >
-            Create Account
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("login");
+                setAuthStep("details");
+                setAuthError("");
+                setAuthSuccessNotice("");
+              }}
+              style={{
+                padding: "7px 0",
+                fontSize: 13,
+                fontWeight: 600,
+                borderRadius: 6,
+                border: "none",
+                cursor: "pointer",
+                background: authMode === "login" ? "#ffffff" : "transparent",
+                color: authMode === "login" ? "#111827" : "#6b7280",
+                boxShadow: authMode === "login" ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
+                transition: "all 0.15s ease",
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode("register");
+                setAuthStep("details");
+                setAuthError("");
+                setAuthSuccessNotice("");
+              }}
+              style={{
+                padding: "7px 0",
+                fontSize: 13,
+                fontWeight: 600,
+                borderRadius: 6,
+                border: "none",
+                cursor: "pointer",
+                background: authMode === "register" ? "#ffffff" : "transparent",
+                color: authMode === "register" ? "#111827" : "#6b7280",
+                boxShadow: authMode === "register" ? "0 1px 2px rgba(0,0,0,0.06)" : "none",
+                transition: "all 0.15s ease",
+              }}
+            >
+              Create Account
+            </button>
+          </div>
+        )}
 
         {/* Status Alerts */}
         {authError && (
@@ -337,18 +457,96 @@ export default function LoginPage() {
         <form onSubmit={handleAuthSubmit}>
           {authStep === "details" ? (
             <>
-              {authMode === "register" && (
+              {authMode === "forgot" ? (
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
+                    Registered email address
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="name@stayops.ai"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "9px 12px",
+                      border: "1px solid #d1d5db",
+                      borderRadius: 6,
+                      fontSize: 13,
+                      color: "#111827",
+                      outline: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <p style={{ fontSize: 12, color: "#6b7280", margin: "6px 0 0 0", lineHeight: 1.4 }}>
+                    We will send a 6-digit verification code to this email to reset your password.
+                  </p>
+                </div>
+              ) : (
                 <>
+                  {authMode === "register" && (
+                    <>
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
+                          Full name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Sonal Sharma"
+                          value={authFullName}
+                          onChange={(e) => setAuthFullName(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "9px 12px",
+                            border: "1px solid #d1d5db",
+                            borderRadius: 6,
+                            fontSize: 13,
+                            color: "#111827",
+                            outline: "none",
+                            boxSizing: "border-box",
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
+                          Account role
+                        </label>
+                        <select
+                          value={authRole}
+                          onChange={(e) => setAuthRole(e.target.value)}
+                          style={{
+                            width: "100%",
+                            padding: "9px 12px",
+                            border: "1px solid #d1d5db",
+                            borderRadius: 6,
+                            fontSize: 13,
+                            color: "#111827",
+                            outline: "none",
+                            boxSizing: "border-box",
+                            background: "#ffffff",
+                          }}
+                        >
+                          <option value="property_manager">Property Manager</option>
+                          <option value="admin">System Administrator</option>
+                          <option value="tenant">Resident / Tenant</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+
                   <div style={{ marginBottom: 14 }}>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
-                      Full name
+                      Email address
                     </label>
                     <input
-                      type="text"
+                      type="email"
                       required
-                      placeholder="e.g. Sonal Sharma"
-                      value={authFullName}
-                      onChange={(e) => setAuthFullName(e.target.value)}
+                      placeholder="name@stayops.ai"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
                       style={{
                         width: "100%",
                         padding: "9px 12px",
@@ -362,13 +560,40 @@ export default function LoginPage() {
                     />
                   </div>
 
-                  <div style={{ marginBottom: 14 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
-                      Account role
-                    </label>
-                    <select
-                      value={authRole}
-                      onChange={(e) => setAuthRole(e.target.value)}
+                  <div style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                        Password
+                      </label>
+                      {authMode === "login" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode("forgot");
+                            setAuthStep("details");
+                            setAuthError("");
+                            setAuthSuccessNotice("");
+                          }}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: "#2563eb",
+                            fontSize: 12,
+                            fontWeight: 500,
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                        >
+                          Forgot password?
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="password"
+                      required
+                      placeholder="••••••••"
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
                       style={{
                         width: "100%",
                         padding: "9px 12px",
@@ -378,62 +603,11 @@ export default function LoginPage() {
                         color: "#111827",
                         outline: "none",
                         boxSizing: "border-box",
-                        background: "#ffffff",
                       }}
-                    >
-                      <option value="property_manager">Property Manager</option>
-                      <option value="admin">System Administrator</option>
-                      <option value="tenant">Resident / Tenant</option>
-                    </select>
+                    />
                   </div>
                 </>
               )}
-
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
-                  Email address
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="name@stayops.ai"
-                  value={authEmail}
-                  onChange={(e) => setAuthEmail(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    border: "1px solid #d1d5db",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    color: "#111827",
-                    outline: "none",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 18 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
-                  Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={authPassword}
-                  onChange={(e) => setAuthPassword(e.target.value)}
-                  style={{
-                    width: "100%",
-                    padding: "9px 12px",
-                    border: "1px solid #d1d5db",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    color: "#111827",
-                    outline: "none",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
 
               <button
                 type="submit"
@@ -451,7 +625,13 @@ export default function LoginPage() {
                   transition: "background 0.15s ease",
                 }}
               >
-                {loading ? "Please wait..." : authMode === "login" ? "Sign in" : "Send verification code"}
+                {loading
+                  ? "Please wait..."
+                  : authMode === "login"
+                  ? "Sign in"
+                  : authMode === "forgot"
+                  ? "Send reset code"
+                  : "Send verification code"}
               </button>
             </>
           ) : (
@@ -459,7 +639,7 @@ export default function LoginPage() {
               {/* OTP Entry Step */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 13, color: "#374151", marginBottom: 12, lineHeight: 1.4 }}>
-                  Enter the 6-digit verification code sent to <strong>{authEmail}</strong>.
+                  Enter the 6-digit {authMode === "forgot" ? "reset code" : "verification code"} sent to <strong>{authEmail}</strong>.
                 </div>
                 <input
                   type="text"
@@ -483,6 +663,56 @@ export default function LoginPage() {
                   }}
                 />
               </div>
+
+              {authMode === "forgot" && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
+                      New password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="At least 6 characters"
+                      value={resetNewPassword}
+                      onChange={(e) => setResetNewPassword(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "9px 12px",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        fontSize: 13,
+                        color: "#111827",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 5 }}>
+                      Confirm new password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Re-enter new password"
+                      value={resetConfirmPassword}
+                      onChange={(e) => setResetConfirmPassword(e.target.value)}
+                      style={{
+                        width: "100%",
+                        padding: "9px 12px",
+                        border: "1px solid #d1d5db",
+                        borderRadius: 6,
+                        fontSize: 13,
+                        color: "#111827",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
 
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 16 }}>
                 <button
@@ -526,7 +756,11 @@ export default function LoginPage() {
                   cursor: "pointer",
                 }}
               >
-                {loading ? "Verifying..." : "Complete registration"}
+                {loading
+                  ? "Verifying..."
+                  : authMode === "forgot"
+                  ? "Reset password & Sign in"
+                  : "Complete registration"}
               </button>
             </>
           )}
