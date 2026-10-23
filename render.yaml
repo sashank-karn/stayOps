@@ -12,7 +12,9 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: USE_N8N_ORCHESTRATOR
-        value: "false"
+        value: "true"
+      - key: N8N_WEBHOOK_URL
+        value: "https://n8n-latest-x379.onrender.com/webhook/stayops-agent"
       - key: APP_ENV
         value: production
       - key: APP_NAME
