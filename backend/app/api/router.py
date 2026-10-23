@@ -1258,6 +1258,12 @@ def update_user_profile(
     # Update full name
     if payload.full_name and payload.full_name.strip():
         target_user.full_name = payload.full_name.strip()
+        associated_tenant = db.query(Tenant).filter(Tenant.email == target_user.email, Tenant.is_deleted == False).first()
+        if associated_tenant:
+            associated_tenant.full_name = target_user.full_name
+        associated_lead = db.query(Lead).filter(Lead.email == target_user.email, Lead.is_deleted == False).first()
+        if associated_lead:
+            associated_lead.full_name = target_user.full_name
 
     # Update email address
     if payload.email and payload.email.strip():
@@ -1266,20 +1272,26 @@ def update_user_profile(
             existing = db.query(User).filter(User.email == new_email, User.id != target_user.id).first()
             if existing:
                 raise HTTPException(status_code=400, detail="This email address is already in use by another account.")
-            target_user.email = new_email
-            # Also sync with associated Tenant record if present
-            associated_tenant = db.query(Tenant).filter(Tenant.user_id == target_user.id).first()
+            # Also sync with associated Tenant and Lead records if present
+            associated_tenant = db.query(Tenant).filter(Tenant.email == target_user.email, Tenant.is_deleted == False).first()
             if associated_tenant:
                 associated_tenant.email = new_email
+            associated_lead = db.query(Lead).filter(Lead.email == target_user.email, Lead.is_deleted == False).first()
+            if associated_lead:
+                associated_lead.email = new_email
+            target_user.email = new_email
 
     # Update phone
     if payload.phone is not None:
         new_phone = payload.phone.strip()
         if hasattr(target_user, "phone"):
             target_user.phone = new_phone
-        associated_tenant = db.query(Tenant).filter(Tenant.user_id == target_user.id).first()
+        associated_tenant = db.query(Tenant).filter(Tenant.email == target_user.email, Tenant.is_deleted == False).first()
         if associated_tenant and new_phone:
             associated_tenant.phone = new_phone
+        associated_lead = db.query(Lead).filter(Lead.email == target_user.email, Lead.is_deleted == False).first()
+        if associated_lead and new_phone:
+            associated_lead.phone = new_phone
 
     # Update password if provided
     if payload.password and len(payload.password.strip()) >= 6:
@@ -1296,6 +1308,7 @@ def update_user_profile(
         "phone": getattr(target_user, "phone", "") or "",
         "role": target_user.role,
         "is_verified": bool(target_user.is_verified),
+        "message": "Profile updated successfully.",
     }
 
 
@@ -1343,72 +1356,7 @@ def update_user_role(
     return {"id": user.id, "email": user.email, "role": user.role, "is_active": user.is_active}
 
 
-class UserProfileUpdateRequest(BaseModel):
-    full_name: Optional[str] = None
-    phone: Optional[str] = None
-    password: Optional[str] = None
-    current_password: Optional[str] = None
 
-
-@router.put("/users/{user_id}/profile")
-def update_user_profile(
-    user_id: str,
-    payload: UserProfileUpdateRequest,
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    """Universal Profile Editing for all roles (Admin, Manager, Resident).
-    Updates full name, contact phone, and optionally updates password.
-    """
-    user = None
-    if user_id in ("me", "self", "current"):
-        user = db.query(User).first()
-    else:
-        user = db.get(User, user_id)
-        if not user:
-            user = db.query(User).filter(User.email == user_id.strip().lower()).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User account not found.")
-
-    if payload.full_name and payload.full_name.strip():
-        user.full_name = payload.full_name.strip()
-
-    if payload.password and payload.password.strip():
-        if len(payload.password.strip()) < 6:
-            raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
-        user.hashed_password = hash_password(payload.password.strip())
-
-    phone_val = None
-    tenant = db.query(Tenant).filter(Tenant.email == user.email, Tenant.is_deleted == False).first()
-    if tenant:
-        if payload.full_name and payload.full_name.strip():
-            tenant.full_name = payload.full_name.strip()
-        if payload.phone and payload.phone.strip():
-            tenant.phone = payload.phone.strip()
-        phone_val = tenant.phone
-    else:
-        lead = db.query(Lead).filter(Lead.email == user.email).first()
-        if lead:
-            if payload.full_name and payload.full_name.strip():
-                lead.name = payload.full_name.strip()
-            if payload.phone and payload.phone.strip():
-                lead.phone = payload.phone.strip()
-            phone_val = lead.phone
-        elif payload.phone and payload.phone.strip():
-            phone_val = payload.phone.strip()
-
-    db.commit()
-    db.refresh(user)
-
-    return {
-        "id": user.id,
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        "phone": phone_val or payload.phone,
-        "is_verified": bool(user.is_verified),
-        "message": "Profile updated successfully.",
-    }
 
 
 # -------------------------------------------------------------
