@@ -904,7 +904,7 @@ def admin_assistant_chat(
         import httpx
         try:
             n8n_url = getattr(app_settings, "n8n_webhook_url", "http://localhost:5678/webhook/stayops-agent")
-            with httpx.Client(timeout=8.0) as client:
+            with httpx.Client(timeout=5.0) as client:
                 n8n_resp = client.post(
                     n8n_url,
                     json={
@@ -930,8 +930,10 @@ def admin_assistant_chat(
                             "Show available double sharing rooms under 15000 in Koramangala",
                         ],
                     }
+                else:
+                    logger.warning("n8n webhook returned status %s; proceeding to local orchestrator", n8n_resp.status_code)
         except Exception as n8n_err:
-            logger.debug("n8n orchestrator forwarding fell back to local orchestrator: %s", n8n_err)
+            logger.info("n8n orchestrator forwarding fell back to local orchestrator: %s", n8n_err)
 
     # Local fallback orchestrator
     orchestrator = OrchestratorAgent(db)
