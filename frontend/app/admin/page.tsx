@@ -23,6 +23,17 @@ function StayOpsLogo({ size = 36 }: { size?: number }) {
   );
 }
 
+function formatMessageText(text: string) {
+  if (!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
 export default function AdminPortal() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -932,7 +943,7 @@ export default function AdminPortal() {
                             whiteSpace: "pre-wrap",
                           }}
                         >
-                          {msg.text}
+                          {formatMessageText(msg.text)}
                         </div>
 
                         {/* Interactive Suggestions Chips */}
@@ -1866,7 +1877,9 @@ export default function AdminPortal() {
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
                     <span style={{ color: "#64748b" }}>Database Connection:</span>
-                    <span style={{ fontWeight: 700, color: "#16a34a" }}>SQLite Operational (Relational Guards Active)</span>
+                    <span style={{ fontWeight: 700, color: "#16a34a" }}>
+                      {diagnostics?.database?.engine || integrations?.database_type || "PostgreSQL (Supabase) Operational"}
+                    </span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #f1f5f9", paddingBottom: 8 }}>
                     <span style={{ color: "#64748b" }}>Active LLM Provider:</span>
@@ -2214,11 +2227,13 @@ export default function AdminPortal() {
                       color: msg.sender === "admin" ? "#ffffff" : "#1e293b",
                       border: msg.sender === "admin" ? "none" : "1px solid #e2e8f0",
                       fontSize: 12,
-                      lineHeight: 1.4,
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
                       boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
                     }}
                   >
-                    {msg.text}
+                    {formatMessageText(msg.text)}
                   </div>
                 </div>
               ))}

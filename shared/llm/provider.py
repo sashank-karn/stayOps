@@ -36,19 +36,23 @@ def get_llm(**overrides: Any):
 
     if provider == "openai":
         if not settings.openai_api_key:
-            raise ValueError("LLM_PROVIDER=openai but OPENAI_API_KEY is not set.")
-        try:
-            from langchain_openai import ChatOpenAI
-        except ImportError as exc:  # pragma: no cover - depends on install phase
-            raise ImportError(
-                "langchain-openai is not installed. Install agent deps (Phase 4)."
-            ) from exc
-        return ChatOpenAI(
-            model=model,
-            temperature=temperature,
-            api_key=settings.openai_api_key,
-            **overrides,
-        )
+            if settings.gemini_api_key:
+                provider = "gemini"
+            else:
+                raise ValueError("LLM_PROVIDER=openai but OPENAI_API_KEY is not set.")
+        else:
+            try:
+                from langchain_openai import ChatOpenAI
+            except ImportError as exc:  # pragma: no cover - depends on install phase
+                raise ImportError(
+                    "langchain-openai is not installed. Install agent deps (Phase 4)."
+                ) from exc
+            return ChatOpenAI(
+                model=model,
+                temperature=temperature,
+                api_key=settings.openai_api_key,
+                **overrides,
+            )
 
     if provider == "gemini":
         if not settings.gemini_api_key:
@@ -59,10 +63,14 @@ def get_llm(**overrides: Any):
             raise ImportError(
                 "langchain-google-genai is not installed. Install agent deps (Phase 4)."
             ) from exc
-        req_timeout = overrides.pop("request_timeout", 3.0)
-        retries = overrides.pop("max_retries", 1)
+        req_timeout = overrides.pop("request_timeout", 20.0)
+        retries = overrides.pop("max_retries", 2)
+        # Normalize models: deprecated/quota-exhausted defaults map to gemini-3.5-flash-lite
+        target_model = model
+        if target_model in ("gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest", "gpt-4o-mini"):
+            target_model = "gemini-3.5-flash-lite"
         return ChatGoogleGenerativeAI(
-            model=model,
+            model=target_model,
             temperature=temperature,
             google_api_key=settings.gemini_api_key,
             request_timeout=req_timeout,

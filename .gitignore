@@ -59,3 +59,10 @@ docker/data/
 # ---------- Local scratch scripts ----------
 scratch/
 
+# ---------- Demo scripts and PDF artifacts ----------
+demo_scripts/
+generate_*.py
+*.pdf
+PROJECT_SYNOPSIS.md
+syllabus/
+

@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import ProfileEditModal from "../components/ProfileEditModal";
+import PaymentGatewayModal from "../components/PaymentGatewayModal";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -27,6 +28,17 @@ function BrandIcon() {
   );
 }
 
+function formatMessageText(text: string) {
+  if (!text) return null;
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
 export default function ResidentPortal() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -38,8 +50,8 @@ export default function ResidentPortal() {
   const [activeTab, setActiveTab] = useState<"find_flat" | "room" | "rent" | "tickets" | "moveout" | "support">("room");
 
   // Unallocated Resident / Leasing Search State
-  const [searchLocation, setSearchLocation] = useState("Bengaluru");
-  const [searchBudget, setSearchBudget] = useState<number>(15000);
+  const [searchLocation, setSearchLocation] = useState("All");
+  const [searchBudget, setSearchBudget] = useState<number>(35000);
   const [searchRoomType, setSearchRoomType] = useState<string>("Any");
   const [searchMoveInDate, setSearchMoveInDate] = useState("2026-11-01");
   const [searchNotes, setSearchNotes] = useState("Looking for a comfortable room with Wi-Fi and food.");
@@ -47,6 +59,9 @@ export default function ResidentPortal() {
   const [loadingRooms, setLoadingRooms] = useState(false);
   const [agentSummary, setAgentSummary] = useState<string>("");
   const [applyingWithAgent, setApplyingWithAgent] = useState(false);
+  const [dynamicCities, setDynamicCities] = useState<string[]>([]);
+  const [isCustomLocation, setIsCustomLocation] = useState(false);
+  const [customLocationText, setCustomLocationText] = useState("");
 
   // Room Booking Modal State
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
@@ -108,12 +123,14 @@ export default function ResidentPortal() {
         setAvailableRooms(data.matches || []);
         if (data.matches?.length > 0) {
           const top = data.matches[0];
+          const locLabel = qLoc === "All" || !qLoc ? "all locations" : qLoc;
+          const budLabel = Number(qBud) >= 50000 ? "any budget" : `₹${Number(qBud).toLocaleString("en-IN")}`;
           setAgentSummary(
-            `Sonali Gupta (Leasing Agent): Found ${data.matches.length} matching room(s) in ${qLoc} within ₹${Number(qBud).toLocaleString("en-IN")}. Top recommendation: ${top.property_name}, Room ${top.room_number} (${top.room_type}) at ₹${Number(top.monthly_rent).toLocaleString("en-IN")}/mo with ${top.match_score}% match score.`
+            `Leasing Agent: Found ${data.matches.length} matching room(s) in ${locLabel} within ${budLabel}. Top recommendation: ${top.property_name} (${top.city}), Room ${top.room_number} (${top.room_type}) at ₹${Number(top.monthly_rent).toLocaleString("en-IN")}/mo with ${top.match_score}% match score.`
           );
         } else {
           setAgentSummary(
-            `Sonali Gupta (Leasing Agent): No vacant beds directly matching ₹${Number(qBud).toLocaleString("en-IN")} in ${qLoc}. Try increasing your budget or selecting a different location.`
+            `Leasing Agent: No vacant beds directly matching ₹${Number(qBud).toLocaleString("en-IN")} in ${qLoc}. Try increasing your budget or choosing 'All Cities & Locations'.`
           );
         }
       }
@@ -187,11 +204,23 @@ export default function ResidentPortal() {
           setChatMessages([
             {
               sender: "bot",
-              text: `Hello ${firstName}! I am Sonali Gupta, your StayOps AI Leasing Agent. You do not have an allocated flat or room yet. Tell me your preferred location, budget, or sharing type, and I will find you verified PG accommodations to book right away!`,
+              text: `Hello ${firstName}! I am your StayOps AI Leasing Agent. You do not have an allocated flat or room yet. Tell me your preferred location, budget, or sharing type, and I will find you verified PG accommodations to book right away!`,
             },
           ]);
-          // Load available rooms immediately
-          fetchAvailableRooms("Bengaluru", 15000, "Any");
+          // Load dynamic cities from property catalog
+          try {
+            const pRes = await fetch(`${API_URL}/api/properties`, { headers });
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              const uniqueCities = Array.from(new Set(pData.map((p: any) => p.city?.trim()).filter(Boolean))) as string[];
+              setDynamicCities(uniqueCities);
+            }
+          } catch (e) {
+            console.error("Failed to load property cities:", e);
+          }
+
+          // Load all available rooms immediately across all cities & prices
+          fetchAvailableRooms("All", 35000, "Any");
         }
       } else {
         router.push("/login");
@@ -243,9 +272,10 @@ export default function ResidentPortal() {
       if (res.ok) {
         const data = await res.json();
         setAvailableRooms(data.matched_rooms || []);
+        const locLabel = searchLocation === "All" ? "all locations" : searchLocation;
         setAgentSummary(
           data.agent_response ||
-            `Found ${data.matched_rooms?.length || 0} matching room(s) for ${payload.full_name} in ${searchLocation}!`
+            `Found ${data.matched_rooms?.length || 0} matching room(s) for ${payload.full_name} in ${locLabel}!`
         );
       } else {
         // Fallback to direct search endpoint
@@ -518,7 +548,7 @@ export default function ResidentPortal() {
 
       if (!hasActiveLease) {
         if (lower.includes("flat") || lower.includes("room") || lower.includes("budget") || lower.includes("available")) {
-          reply = `Sonali Gupta (Leasing Agent): We have verified beds available in Koramangala (₹11,000/mo) and Viman Nagar Pune (₹7,500/mo). Use the 'Find a Flat' search form above to inspect photos and instantly allocate your room!`;
+          reply = `Leasing Agent: We have verified beds available in Koramangala (₹11,000/mo) and Viman Nagar Pune (₹7,500/mo). Use the 'Find a Flat' search form above to inspect photos and instantly allocate your room!`;
         } else {
           reply = "I am your StayOps AI Leasing Agent. Once you submit your budget and preferred location, I will find you available rooms to book!";
         }
@@ -763,7 +793,7 @@ export default function ResidentPortal() {
                 Find Your Flat with StayOps AI Leasing Agent
               </h1>
               <p style={{ fontSize: 14, color: "#cbd5e1", margin: 0, maxWidth: 680, lineHeight: 1.5 }}>
-                Welcome, {residentName}! You do not have a room or flat allocated yet. Tell our AI Leasing Agent (Sonali Gupta) your preferred location and budget. The agent will scan authoritative property inventory, calculate transparent match scores, and let you allocate or tour verified PG rooms instantly.
+                Welcome, {residentName}! You do not have a room or flat allocated yet. Tell our AI Leasing Agent your preferred location and budget. The agent will scan authoritative property inventory, calculate transparent match scores, and let you allocate or tour verified PG rooms instantly.
               </p>
             </div>
 
@@ -787,42 +817,118 @@ export default function ResidentPortal() {
                   </div>
                 </div>
                 <div style={{ fontSize: 12, color: "#2563eb", fontWeight: 600 }}>
-                  Agent: Sonali Gupta (Leasing AI)
+                  Agent: StayOps Leasing AI
                 </div>
               </div>
 
               <form onSubmit={handleApplyWithAgent}>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 14 }}>
                   <div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                      City / Area
-                    </label>
-                    <select
-                      value={searchLocation}
-                      onChange={(e) => setSearchLocation(e.target.value)}
-                      style={{ width: "100%", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#ffffff" }}
-                    >
-                      <option value="Bengaluru">Bengaluru (All Areas)</option>
-                      <option value="Koramangala">Bengaluru — Koramangala</option>
-                      <option value="Pune">Pune — Viman Nagar</option>
-                      <option value="HSR Layout">Bengaluru — HSR Layout</option>
-                      <option value="Indiranagar">Bengaluru — Indiranagar</option>
-                    </select>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                        City / Location
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextState = !isCustomLocation;
+                          setIsCustomLocation(nextState);
+                          if (!nextState) {
+                            setSearchLocation("All");
+                            fetchAvailableRooms("All", searchBudget, searchRoomType);
+                          }
+                        }}
+                        style={{ background: "none", border: "none", color: "#2563eb", fontSize: 11, cursor: "pointer", padding: 0 }}
+                      >
+                        {isCustomLocation ? "← Choose from List" : "+ Type Custom Area"}
+                      </button>
+                    </div>
+
+                    {isCustomLocation ? (
+                      <input
+                        type="text"
+                        value={customLocationText}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomLocationText(val);
+                          setSearchLocation(val.trim() || "All");
+                        }}
+                        placeholder="Type any city or locality (e.g. Pune, Koramangala...)"
+                        style={{ width: "100%", padding: "9px 12px", border: "1px solid #2563eb", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }}
+                      />
+                    ) : (
+                      <select
+                        value={searchLocation}
+                        onChange={(e) => {
+                          if (e.target.value === "__custom__") {
+                            setIsCustomLocation(true);
+                          } else {
+                            setSearchLocation(e.target.value);
+                            fetchAvailableRooms(e.target.value, searchBudget, searchRoomType);
+                          }
+                        }}
+                        style={{ width: "100%", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, background: "#ffffff" }}
+                      >
+                        <option value="All">All Cities &amp; Locations (Everywhere)</option>
+                        {dynamicCities.map((city) => (
+                          <option key={city} value={city}>
+                            {city} (All PG Units)
+                          </option>
+                        ))}
+                        <optgroup label="Popular Hubs">
+                          <option value="Koramangala">Bengaluru — Koramangala</option>
+                          <option value="Viman Nagar">Pune — Viman Nagar</option>
+                          <option value="HSR Layout">Bengaluru — HSR Layout</option>
+                          <option value="Indiranagar">Bengaluru — Indiranagar</option>
+                          <option value="Whitefield">Bengaluru — Whitefield</option>
+                        </optgroup>
+                        <option value="__custom__">+ Type Custom City or Area...</option>
+                      </select>
+                    )}
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                      Max Budget (₹/month)
-                    </label>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                        Max Budget (₹/month)
+                      </label>
+                      <span style={{ fontSize: 11, color: "#166534", fontWeight: 700 }}>
+                        {searchBudget >= 50000 ? "Any / No Limit" : `₹${Number(searchBudget).toLocaleString("en-IN")}`}
+                      </span>
+                    </div>
                     <input
                       type="number"
-                      step={500}
+                      step={1000}
                       min={5000}
-                      max={40000}
+                      max={100000}
                       value={searchBudget}
                       onChange={(e) => setSearchBudget(Number(e.target.value))}
                       style={{ width: "100%", padding: "9px 12px", border: "1px solid #d1d5db", borderRadius: 6, fontSize: 13, boxSizing: "border-box" }}
                     />
+                    <div style={{ display: "flex", gap: 5, marginTop: 6, flexWrap: "wrap" }}>
+                      {[10000, 15000, 20000, 30000, 50000].map((bVal) => (
+                        <button
+                          key={bVal}
+                          type="button"
+                          onClick={() => {
+                            setSearchBudget(bVal);
+                            fetchAvailableRooms(searchLocation, bVal, searchRoomType);
+                          }}
+                          style={{
+                            background: searchBudget === bVal ? "#0f172a" : "#f1f5f9",
+                            color: searchBudget === bVal ? "#ffffff" : "#475569",
+                            border: "none",
+                            borderRadius: 4,
+                            padding: "3px 7px",
+                            fontSize: 10,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {bVal === 50000 ? "All Prices" : `₹${bVal / 1000}k`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div>
@@ -1614,7 +1720,7 @@ export default function ResidentPortal() {
               <div style={{ padding: "14px 20px", borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>
-                    {hasActiveLease ? `Resident Concierge (${propertyName})` : "StayOps AI Leasing Concierge (Sonali Gupta)"}
+                    {hasActiveLease ? `Resident Concierge (${propertyName})` : "StayOps AI Leasing Concierge"}
                   </div>
                   <div style={{ fontSize: 11, color: "#6b7280" }}>
                     {hasActiveLease ? `Automated assistance for Room ${roomNumber}` : "AI assistant to find PG rooms, check budget, and book flats"}
@@ -1638,7 +1744,7 @@ export default function ResidentPortal() {
                         lineHeight: 1.45,
                       }}
                     >
-                      {msg.text}
+                      {formatMessageText(msg.text)}
                     </div>
                   </div>
                 ))}
@@ -1919,112 +2025,32 @@ export default function ResidentPortal() {
         </div>
       )}
 
-      {/* ---------------- PAY RENT MODAL ---------------- */}
-      {payModalOpen && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-          <div style={{ background: "#ffffff", borderRadius: 10, width: 420, padding: 24, boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#111827" }}>Pay Monthly Rent</h3>
-              <button
-                onClick={() => { setPayModalOpen(false); setPaySuccess(false); }}
-                style={{ background: "none", border: "none", fontSize: 16, cursor: "pointer", color: "#6b7280" }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {paySuccess ? (
-              <div style={{ textAlign: "center", padding: "16px 0" }}>
-                <div style={{ fontSize: 32, color: "#15803d", marginBottom: 6 }}>✓</div>
-                <h4 style={{ fontSize: 16, fontWeight: 700, color: "#166534", margin: 0 }}>
-                  Payment of ₹{monthlyRent.toLocaleString("en-IN")} verified!
-                </h4>
-                <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-                  Reference: {paidTxnRef}
-                </div>
-                <div style={{ fontSize: 12, color: "#15803d", marginTop: 4 }}>
-                  Credited to Room {roomNumber || ""} rent ledger.
-                </div>
-                <button
-                  onClick={() => { setPayModalOpen(false); setPaySuccess(false); }}
-                  style={{ marginTop: 18, background: "#0f172a", color: "#ffffff", border: "none", borderRadius: 6, padding: "8px 16px", fontWeight: 600, cursor: "pointer", fontSize: 12 }}
-                >
-                  Done
-                </button>
-              </div>
-            ) : (
-              <div>
-                <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: 14, marginBottom: 14 }}>
-                  <div style={{ fontSize: 12, color: "#6b7280" }}>Invoice Amount:</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: "#111827", marginTop: 2 }}>
-                    ₹{monthlyRent.toLocaleString("en-IN")}
-                  </div>
-                  <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>
-                    {propertyName} • Room {roomNumber || ""}{bedLabel}
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-                    Choose Payment Method
-                  </label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {[
-                      { id: "upi", label: "UPI (Google Pay / PhonePe / Paytm / BHIM)", sub: "Instant 0% convenience fee" },
-                      { id: "netbanking", label: "NetBanking / IMPS", sub: "HDFC, ICICI, SBI, Axis, Kotak" },
-                      { id: "card", label: "Debit / Credit Card", sub: "Visa, Mastercard, RuPay" },
-                    ].map((m) => (
-                      <label
-                        key={m.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          padding: "10px 12px",
-                          border: paymentMethod === m.id ? "2px solid #0f172a" : "1px solid #e5e7eb",
-                          borderRadius: 6,
-                          cursor: "pointer",
-                          background: paymentMethod === m.id ? "#f8fafc" : "#ffffff",
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="payMethod"
-                          value={m.id}
-                          checked={paymentMethod === m.id}
-                          onChange={(e) => setPaymentMethod(e.target.value)}
-                        />
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>{m.label}</div>
-                          <div style={{ fontSize: 11, color: "#6b7280" }}>{m.sub}</div>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <button
-                  onClick={handlePayRentSubmit}
-                  disabled={payingRent}
-                  style={{
-                    width: "100%",
-                    background: "#0f172a",
-                    color: "#ffffff",
-                    border: "none",
-                    borderRadius: 6,
-                    padding: "11px",
-                    fontWeight: 600,
-                    fontSize: 13,
-                    cursor: "pointer",
-                  }}
-                >
-                  {payingRent ? "Processing transaction..." : `Authorize Payment of ₹${monthlyRent.toLocaleString("en-IN")}`}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ---------------- STAYOPS PAY GATEWAY MODAL (UPI 2.0 ZERO MDR) ---------------- */}
+      <PaymentGatewayModal
+        isOpen={payModalOpen}
+        onClose={() => setPayModalOpen(false)}
+        amount={monthlyRent}
+        invoiceId={profile?.invoices?.find((i: any) => i.status !== "Paid")?.id}
+        tenantId={profile?.tenant?.id}
+        residentEmail={currentUser?.email || profile?.user?.email}
+        residentName={currentUser?.full_name || profile?.user?.full_name || "Resident"}
+        propertyName={propertyName}
+        roomNumber={roomNumber || "101"}
+        bedLabel={bedLabel || "A"}
+        billingMonth={profile?.invoices?.find((i: any) => i.status !== "Paid")?.billing_month || "Current Month"}
+        merchantVpa="stayops.living@okhdfcbank"
+        onSuccess={async (txnData) => {
+          setPaidTxnRef(txnData.reference_id);
+          setPaySuccess(true);
+          if (currentUser?.email) {
+            const refRes = await fetch(`${API_URL}/api/resident/profile?email=${encodeURIComponent(currentUser.email)}`);
+            if (refRes.ok) {
+              const updated = await refRes.json();
+              setProfile(updated);
+            }
+          }
+        }}
+      />
 
       {/* ---------------- CREATE TICKET MODAL ---------------- */}
       {ticketModalOpen && (

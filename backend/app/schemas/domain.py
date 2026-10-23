@@ -591,6 +591,7 @@ class TicketCreateRequest(BaseModel):
     description: str
     category: str = "General"  # Plumbing, Electrical, Appliance, Housekeeping, Wi-Fi, General
     severity: str = "Medium"  # Emergency, High, Medium, Low
+    estimated_cost: Optional[float] = None
 
 
 class TicketStatusUpdateRequest(BaseModel):

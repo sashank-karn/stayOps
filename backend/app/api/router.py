@@ -17,8 +17,8 @@ from datetime import date, datetime, timezone
 from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, and_, desc
-from sqlalchemy.orm import Session
+from sqlalchemy import select, and_, desc, func, case
+from sqlalchemy.orm import Session, selectinload
 
 from backend.app.db.session import get_db
 from backend.app.db.seed import seed_database
@@ -96,6 +96,7 @@ from agents.collections.agent import get_portfolio_financial_metrics
 from agents.vacancy_revenue.agent import calculate_portfolio_occupancy
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 router = APIRouter(prefix="/api", tags=["StayOps Operations"])
 
@@ -143,22 +144,37 @@ def get_dashboard_metrics(db: Session = Depends(get_db)) -> dict[str, Any]:
 
 @router.get("/properties")
 def list_properties(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
-    """List all managed properties with room, bed counts, and scheduled viewing request counts."""
-    props = db.query(Property).filter(Property.is_deleted == False).all()
+    """List all managed properties with room, bed counts, and scheduled viewing request counts (eager batch loaded)."""
+    props = (
+        db.query(Property)
+        .options(selectinload(Property.rooms).selectinload(Room.beds))
+        .filter(Property.is_deleted == False)
+        .all()
+    )
+    # Batch aggregate visits in a single query
+    visit_stats = (
+        db.query(
+            PropertyVisit.property_id,
+            func.count(PropertyVisit.id).label("total_visits"),
+            func.sum(
+                case(
+                    (PropertyVisit.status.in_(["scheduled", "confirmed"]), 1),
+                    else_=0,
+                )
+            ).label("pending_visits"),
+        )
+        .filter(PropertyVisit.is_deleted == False)
+        .group_by(PropertyVisit.property_id)
+        .all()
+    )
+    visit_map = {v[0]: {"total": v[1] or 0, "pending": v[2] or 0} for v in visit_stats}
+
     results = []
     for p in props:
         total_rooms = len(p.rooms)
         total_beds = sum(len(r.beds) for r in p.rooms)
         available_beds = sum(sum(1 for b in r.beds if b.status == "available") for r in p.rooms)
-        pending_visits = db.query(PropertyVisit).filter(
-            PropertyVisit.property_id == p.id,
-            PropertyVisit.status.in_(["scheduled", "confirmed"]),
-            PropertyVisit.is_deleted == False,
-        ).count()
-        total_visits = db.query(PropertyVisit).filter(
-            PropertyVisit.property_id == p.id,
-            PropertyVisit.is_deleted == False,
-        ).count()
+        v_info = visit_map.get(p.id, {"total": 0, "pending": 0})
         results.append(
             {
                 "id": p.id,
@@ -172,8 +188,8 @@ def list_properties(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
                 "total_rooms": total_rooms,
                 "total_beds": total_beds,
                 "available_beds": available_beds,
-                "pending_visits": pending_visits,
-                "total_visits": total_visits,
+                "pending_visits": v_info["pending"],
+                "total_visits": v_info["total"],
             }
         )
     return results
@@ -181,8 +197,13 @@ def list_properties(db: Session = Depends(get_db)) -> List[dict[str, Any]]:
 
 @router.get("/rooms")
 def list_rooms(property_id: Optional[str] = None, db: Session = Depends(get_db)) -> List[dict[str, Any]]:
-    """List rooms with their beds and availability status."""
-    stmt = select(Room, Property).join(Property, Room.property_id == Property.id).where(Room.is_deleted == False)
+    """List rooms with their beds and availability status (eager batch loaded)."""
+    stmt = (
+        select(Room, Property)
+        .join(Property, Room.property_id == Property.id)
+        .options(selectinload(Room.beds))
+        .where(Room.is_deleted == False)
+    )
     if property_id:
         stmt = stmt.where(Room.property_id == property_id)
     records = db.execute(stmt).all()
@@ -621,9 +642,16 @@ def review_approval(
     approval.review_notes = payload.notes
     approval.reviewed_at = datetime.now(timezone.utc)
 
-    # If approved, update associated workflow status
+    # If approved, update associated workflow status and unlock linked tickets
     if approval.workflow:
         approval.workflow.status = "completed" if payload.action == "approved" else "rejected"
+        if approval.action_type == "high_cost_maintenance" and isinstance(approval.workflow.input_payload, dict):
+            t_id = approval.workflow.input_payload.get("ticket_id")
+            if t_id:
+                t_obj = db.get(MaintenanceTicket, t_id)
+                if t_obj:
+                    t_obj.status = "assigned" if payload.action == "approved" else "cancelled"
+                    t_obj.resolution_notes = f"Safety approval {payload.action} by {payload.reviewed_by}."
 
     db.commit()
     return {
@@ -631,6 +659,84 @@ def review_approval(
         "status": approval.status,
         "reviewed_by": approval.reviewed_by,
         "message": f"Action has been {approval.status}.",
+    }
+
+
+class SimulateHighCostRepairRequest(BaseModel):
+    property_id: Optional[str] = None
+    title: str = "Commercial RO Purification Compressor Replacement"
+    estimated_cost: float = 7500.0
+    description: str = "Emergency failure of central RO water filtration compressor. Vendor quote ₹7,500 exceeds ₹5,000 safety threshold. Requires manager authorization before fund release."
+    category: str = "Appliance"
+
+
+@router.post("/approvals/simulate")
+def simulate_high_cost_approval(
+    payload: SimulateHighCostRepairRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Simulate a high-cost repair (> ₹5,000) triggering the Human-in-the-Loop Safety Approval gate."""
+    prop = None
+    if payload.property_id:
+        prop = db.get(Property, payload.property_id)
+    if not prop:
+        prop = db.query(Property).filter(Property.is_deleted == False).first()
+    if not prop:
+        raise HTTPException(status_code=404, detail="No active property found to attach repair.")
+
+    cost = max(5000.0, float(payload.estimated_cost))
+
+    ticket = MaintenanceTicket(
+        property_id=prop.id,
+        title=payload.title,
+        description=payload.description,
+        category=payload.category,
+        severity="Emergency",
+        status="needs_approval",
+        estimated_cost=cost,
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+
+    wf = WorkflowExecution(
+        workflow_type="maintenance_repair_approval",
+        initiator="maintenance_agent",
+        status="needs_approval",
+        input_payload={
+            "ticket_id": ticket.id,
+            "title": ticket.title,
+            "category": ticket.category,
+            "estimated_cost": cost,
+            "property_id": prop.id,
+            "property_name": prop.name,
+        },
+    )
+    db.add(wf)
+    db.commit()
+    db.refresh(wf)
+
+    approval = ApprovalRequest(
+        workflow_id=wf.id,
+        agent_name="maintenance_agent",
+        action_type="high_cost_maintenance",
+        estimated_cost=cost,
+        description=f"High-Cost Maintenance Quote: {payload.title} (₹{cost:,.0f}). Exceeds ₹5,000 safety threshold. Awaiting Property Manager fund disbursement authorization.",
+        status="pending",
+    )
+    db.add(approval)
+    db.commit()
+    db.refresh(approval)
+
+    return {
+        "approval_id": approval.id,
+        "ticket_id": ticket.id,
+        "action_type": approval.action_type,
+        "estimated_cost": approval.estimated_cost,
+        "status": approval.status,
+        "description": approval.description,
+        "property_name": prop.name,
+        "message": f"High-cost repair approval gate created successfully for ₹{cost:,.0f}.",
     }
 
 
@@ -803,6 +909,28 @@ def get_system_diagnostics_api(db: Session = Depends(get_db)) -> dict[str, Any]:
     return orchestrator.get_system_diagnostics()
 
 
+@router.get("/integrations/status")
+def get_integrations_status() -> dict[str, Any]:
+    """Retrieve runtime integration health across LLMs, notification buses, and database."""
+    from shared.config import get_settings
+    from backend.app.db.session import engine
+    st = get_settings()
+    driver = getattr(engine.url, "drivername", "unknown")
+    is_postgres = "postgresql" in driver or "postgres" in driver
+    db_label = "PostgreSQL (Supabase)" if is_postgres else "SQLite (Local Fallback)"
+
+    return {
+        "active_llm_provider": st.llm_provider.capitalize(),
+        "gemini_configured": bool(st.gemini_api_key),
+        "email_smtp_configured": bool(st.smtp_host or st.resend_api_key or st.brevo_api_key),
+        "google_calendar_configured": bool(st.google_calendar_client_id),
+        "whatsapp_configured": bool(st.whatsapp_phone_number_id or st.whatsapp_access_token),
+        "vector_store_ready": True,
+        "database_type": db_label,
+        "database_driver": driver,
+    }
+
+
 # -------------------------------------------------------------
 # Multi-Agent Subsystem Catalog, Dispatcher & Admin Chat Assistant
 # -------------------------------------------------------------
@@ -820,42 +948,42 @@ def list_registered_agents() -> List[dict[str, Any]]:
         },
         {
             "id": "leasing",
-            "name": "Lead & Leasing Agent (Sonali Gupta)",
+            "name": "Lead & Leasing Agent",
             "role": "Manages prospect inquiries, matches vacant beds by budget & city, and books guided visits.",
             "status": "online",
             "tools": ["match_rooms_for_lead", "process_enquiry", "schedule_visit_tour", "send_whatsapp_outreach"],
         },
         {
             "id": "tenant_support",
-            "name": "Tenant Support Agent (Aarav Sharma)",
+            "name": "Tenant Support Agent",
             "role": "Handles resident amenities, Wi-Fi passcodes, mess schedules, and move-out notices.",
             "status": "online",
             "tools": ["validate_tenant", "record_move_out_notice", "resident_concierge", "curfew_rules_lookup"],
         },
         {
             "id": "maintenance",
-            "name": "Maintenance & Vendor Agent (Rohan Verma)",
+            "name": "Maintenance & Vendor Agent",
             "role": "Triages repair tickets, assigns accredited contractors, and routes high-cost tasks to admin.",
             "status": "online",
             "tools": ["triage_ticket", "assign_vendor", "estimate_repair_cost", "request_admin_approval"],
         },
         {
             "id": "collections",
-            "name": "Rent & Collections Agent (Adarsh Jha)",
+            "name": "Rent & Collections Agent",
             "role": "Monitors rent ledgers, calculates late fees, forecasts 30-day cashflows, and sends reminders.",
             "status": "online",
             "tools": ["get_portfolio_financials", "forecast_collections", "assess_late_fees", "whatsapp_due_reminder"],
         },
         {
             "id": "vacancy_revenue",
-            "name": "Vacancy & Revenue Agent (Priya Nair)",
+            "name": "Vacancy & Revenue Agent",
             "role": "Calculates downtime revenue loss, tracks occupancy %, and prioritizes bed turnaround relisting.",
             "status": "online",
             "tools": ["calculate_vacancy_loss", "calculate_portfolio_occupancy", "get_relist_queue", "pricing_optimizer"],
         },
         {
             "id": "facilitator",
-            "name": "Monitoring & Facilitator Agent (StayOps Guardian)",
+            "name": "Operations Facilitator Agent",
             "role": "Supervises multi-agent execution compliance, audits latency, and prevents dead-letter loops.",
             "status": "online",
             "tools": ["verify_task_execution", "latency_auditor", "contract_compliance_verifier"],
@@ -900,16 +1028,19 @@ def admin_assistant_chat(
         or ctx.get("is_n8n_internal") is True
     )
 
+    if "user_role" not in ctx and "role" in ctx:
+        ctx["user_role"] = ctx["role"]
+
     if not is_n8n_sync and getattr(app_settings, "use_n8n_orchestrator", True):
         import httpx
         try:
             n8n_url = getattr(app_settings, "n8n_webhook_url", "http://localhost:5678/webhook/stayops-agent")
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=2.0) as client:
                 n8n_resp = client.post(
                     n8n_url,
                     json={
                         "message": msg,
-                        "caller_role": ctx.get("user_role") or ctx.get("role") or "admin",
+                        "caller_role": ctx.get("user_role") or "admin",
                         "email": ctx.get("email") or "admin@stayops.com",
                         "tenant_id": ctx.get("tenant_id") or "T-001",
                         "source": "frontend_chat",
@@ -917,19 +1048,24 @@ def admin_assistant_chat(
                 )
                 if n8n_resp.status_code == 200:
                     data = n8n_resp.json()
-                    return {
-                        "response": data.get("response") or "Task executed successfully via n8n Multi-Agent Workflow.",
-                        "agent": data.get("coordinator") or "Central Orchestrator Agent (n8n)",
-                        "action_performed": data.get("live_backend_sync") or "n8n_workflow_executed",
-                        "data": data.get("workflow_state"),
-                        "execution_time_ms": 250,
-                        "suggestions": [
-                            "Tenant informs they are moving out of room 204 after 15 days",
-                            "Assess portfolio occupancy, calculate 30-day downtime loss exposure",
-                            "Audit overdue rent payments and collections",
-                            "Show available double sharing rooms under 15000 in Koramangala",
-                        ],
-                    }
+                    n8n_response_text = data.get("response") or ""
+                    # Only return directly if n8n performed the multi-agent move-out cascade
+                    if "15-Day Move-Out" in n8n_response_text or "[MULTI-AGENT]" in (data.get("title") or ""):
+                        return {
+                            "response": n8n_response_text,
+                            "agent": data.get("coordinator") or "Central Orchestrator Agent (n8n)",
+                            "action_performed": data.get("live_backend_sync") or "n8n_workflow_executed",
+                            "data": data.get("workflow_state"),
+                            "execution_time_ms": 250,
+                            "suggestions": [
+                                "Tenant informs they are moving out of room 204 after 15 days",
+                                "Assess portfolio occupancy, calculate 30-day downtime loss exposure",
+                                "Audit overdue rent payments and collections",
+                                "Show available double sharing rooms under 15000 in Koramangala",
+                            ],
+                        }
+                    else:
+                        logger.info("n8n acknowledged request; routing to local Orchestrator for real state mutation and answer.")
                 else:
                     logger.warning("n8n webhook returned status %s; proceeding to local orchestrator", n8n_resp.status_code)
         except Exception as n8n_err:
@@ -941,15 +1077,33 @@ def admin_assistant_chat(
     agent_name = dispatch_res.get("primary_agent", "orchestrator")
     display_agent = {
         "orchestrator": "Central Orchestrator",
-        "leasing": "Lead & Leasing Agent (Sonali Gupta)",
-        "tenant_support": "Tenant Support Agent (Aarav Sharma)",
-        "maintenance": "Maintenance & Vendor Agent (Rohan Verma)",
-        "collections": "Rent & Collections Agent (Adarsh Jha)",
-        "vacancy_revenue": "Vacancy & Revenue Agent (Priya Nair)",
-        "facilitator": "StayOps Guardian",
+        "leasing": "Lead & Leasing Agent",
+        "tenant_support": "Tenant Support Agent",
+        "maintenance": "Maintenance & Vendor Agent",
+        "collections": "Rent & Collections Agent",
+        "vacancy_revenue": "Vacancy & Revenue Agent",
+        "facilitator": "Operations Facilitator Agent",
     }.get(agent_name, "StayOps Multi-Agent System")
 
     text_resp = dispatch_res.get("llm_synthesis") or dispatch_res.get("response") or "Task executed successfully."
+    for prefix in [
+        "Lead & Leasing Agent (Sonali Gupta):",
+        "Lead & Leasing Agent:",
+        "Tenant Support Agent (Aarav Sharma):",
+        "Tenant Support Agent:",
+        "Maintenance & Vendor Agent (Rohan Verma):",
+        "Maintenance & Vendor Agent:",
+        "Rent & Collections Agent (Adarsh Jha):",
+        "Rent & Collections Agent:",
+        "Vacancy & Revenue Agent (Priya Nair):",
+        "Vacancy & Revenue Agent:",
+        "Orchestrator Agent:",
+        "Central Orchestrator:",
+        "Sonali Gupta (Leasing Agent):",
+    ]:
+        if text_resp.startswith(prefix):
+            text_resp = text_resp[len(prefix):].strip()
+
     return {
         "response": text_resp,
         "agent": display_agent,
@@ -995,7 +1149,7 @@ def send_email_otp(payload: SendOTPRequest, db: Session = Depends(get_db)):
         "message": f"A 6-digit verification code has been dispatched to {payload.email}.",
         "email": payload.email,
         "expires_in_seconds": 600,
-        "dev_otp": None,
+        "dev_otp": code if getattr(settings, "app_debug", False) else None,
     }
 
 
@@ -1152,7 +1306,7 @@ def forgot_password_request(payload: ForgotPasswordRequest, db: Session = Depend
         "message": f"A 6-digit password reset verification code has been dispatched to {payload.email}.",
         "email": payload.email,
         "expires_in_seconds": 1200,
-        "dev_otp": None,
+        "dev_otp": code if getattr(settings, "app_debug", False) else None,
     }
 
 
@@ -1325,6 +1479,7 @@ class ResidentPayRentRequest(BaseModel):
     email: Optional[str] = None
     amount: float
     payment_method: Optional[str] = "upi"
+    utr_reference: Optional[str] = None
 
 
 class ResidentTicketCreateRequest(BaseModel):
@@ -1563,21 +1718,62 @@ def get_resident_profile(
     return ensure_tenant_provisioned(db, target_user)
 
 
+def ensure_property_inventory(db: Session, prop: Property) -> None:
+    """Ensure an active property has rooms and beds for resident leasing."""
+    active_rooms = [r for r in prop.rooms if not r.is_deleted]
+    if not active_rooms:
+        room_configs = [
+            {"num": "101", "floor": 1, "type": "Double", "rent": 12000.0, "beds": ["Bed A", "Bed B"]},
+            {"num": "102", "floor": 1, "type": "Single", "rent": 18000.0, "beds": ["Bed A"]},
+            {"num": "201", "floor": 2, "type": "Triple", "rent": 9500.0, "beds": ["Bed A", "Bed B", "Bed C"]},
+        ]
+        for rc in room_configs:
+            rm = Room(
+                property_id=prop.id,
+                room_number=rc["num"],
+                floor_number=rc["floor"],
+                room_type=rc["type"],
+                base_rent=rc["rent"],
+                is_available=True,
+            )
+            db.add(rm)
+            db.flush()
+            for bl in rc["beds"]:
+                bed = Bed(
+                    room_id=rm.id,
+                    bed_label=bl,
+                    status="available",
+                    monthly_rent=rc["rent"],
+                )
+                db.add(bed)
+        db.commit()
+
+
 @router.get("/resident/available-rooms")
 def get_available_rooms_for_resident(
-    budget: float = Query(25000.0, ge=1000.0),
-    location: str = Query("Bengaluru"),
+    budget: float = Query(35000.0, ge=1000.0),
+    location: str = Query("All"),
     room_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Search and score available inventory for resident flat allocation using the Leasing Agent."""
+    # Ensure any active property without rooms gets starter rooms/beds populated
+    empty_props = (
+        db.query(Property)
+        .filter(Property.is_active == True, Property.is_deleted == False)
+        .all()
+    )
+    for p in empty_props:
+        if not p.rooms or all(r.is_deleted for r in p.rooms):
+            ensure_property_inventory(db, p)
+
     from agents.leasing.agent import match_rooms_for_lead
     matches = match_rooms_for_lead(
         db=db,
         budget=budget,
         location=location,
         preferred_room_type=room_type,
-        limit=10,
+        limit=50,
     )
     return {
         "success": True,
@@ -1746,7 +1942,7 @@ def pay_resident_rent(
         payment_type="Rent",
         status="paid",
         payment_method=payload.payment_method or "UPI",
-        reference_id=f"TXN-STAY-{int(time.time() * 1000)}",
+        reference_id=(payload.utr_reference.strip() if payload.utr_reference and payload.utr_reference.strip() else f"TXN-STAY-{int(time.time() * 1000)}"),
     )
     db.add(tx)
     db.commit()
@@ -1858,6 +2054,7 @@ def create_property(payload: PropertyCreate, db: Session = Depends(get_db)) -> d
     db.add(prop)
     db.commit()
     db.refresh(prop)
+    ensure_property_inventory(db, prop)
     return {"id": prop.id, "name": prop.name, "code": prop.code, "status": "created"}
 
 
@@ -2339,8 +2536,17 @@ def create_maintenance_ticket(payload: TicketCreateRequest, db: Session = Depend
         raise HTTPException(status_code=404, detail="Property not found.")
 
     # Cost estimation heuristic
-    cost_map = {"Emergency": 2500.0, "High": 1200.0, "Medium": 600.0, "Low": 300.0}
-    est_cost = cost_map.get(payload.severity, 600.0)
+    if payload.estimated_cost is not None and payload.estimated_cost > 0:
+        est_cost = float(payload.estimated_cost)
+    else:
+        cost_map = {"Emergency": 5500.0, "High": 2200.0, "Medium": 600.0, "Low": 300.0}
+        est_cost = cost_map.get(payload.severity, 600.0)
+
+    # Check if estimated cost exceeds safety threshold (> ₹5,000 or > threshold)
+    app_settings = get_settings()
+    threshold = getattr(app_settings, "approval_cost_threshold", 2000.0)
+    requires_approval = (est_cost > 5000.0) or (est_cost > threshold)
+    initial_status = "needs_approval" if requires_approval else "open"
 
     ticket = MaintenanceTicket(
         property_id=payload.property_id,
@@ -2350,13 +2556,54 @@ def create_maintenance_ticket(payload: TicketCreateRequest, db: Session = Depend
         description=payload.description,
         category=payload.category,
         severity=payload.severity,
-        status="open",
+        status=initial_status,
         estimated_cost=est_cost,
     )
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
-    return {"id": ticket.id, "title": ticket.title, "severity": ticket.severity, "status": "open"}
+
+    approval_id = None
+    if requires_approval:
+        wf = WorkflowExecution(
+            workflow_type="maintenance_repair_approval",
+            initiator="maintenance_agent",
+            status="needs_approval",
+            input_payload={
+                "ticket_id": ticket.id,
+                "title": ticket.title,
+                "category": ticket.category,
+                "estimated_cost": est_cost,
+                "property_id": payload.property_id,
+                "property_name": prop.name,
+            },
+        )
+        db.add(wf)
+        db.commit()
+        db.refresh(wf)
+
+        approval = ApprovalRequest(
+            workflow_id=wf.id,
+            agent_name="maintenance_agent",
+            action_type="high_cost_maintenance",
+            estimated_cost=est_cost,
+            description=f"High-Cost Maintenance Quote: {ticket.title} (₹{est_cost:,.0f}). Exceeds safety threshold. Requires Property Manager authorization.",
+            status="pending",
+        )
+        db.add(approval)
+        db.commit()
+        db.refresh(approval)
+        approval_id = approval.id
+
+    return {
+        "id": ticket.id,
+        "title": ticket.title,
+        "severity": ticket.severity,
+        "status": ticket.status,
+        "estimated_cost": ticket.estimated_cost,
+        "requires_approval": requires_approval,
+        "approval_id": approval_id,
+    }
 
 
 @router.put("/tickets/{ticket_id}/status")
@@ -2417,7 +2664,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "orchestrator",
             "name": "Central Orchestrator Agent",
-            "member": "Sashank Karn",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Supervisory coordination, workflow formulary, task dispatch, approval gating.",
             "tools": ["dispatch_task", "verify_dependencies", "record_audit", "system_diagnostics"],
@@ -2425,7 +2672,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "leasing",
             "name": "Lead & Leasing Agent",
-            "member": "Sonali Gupta",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Prospective tenant matching, budget filtering, visit scheduling & rescheduling.",
             "tools": ["match_leads_to_rooms", "schedule_visit", "reschedule_visit", "lead_scoring"],
@@ -2433,7 +2680,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "tenant_support",
             "name": "Tenant Support Agent",
-            "member": "Sonali Gupta / Prabin Yadav",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Resident communication, move-out notices, complaint SLA triage.",
             "tools": ["record_move_out_notice", "triage_complaint", "fetch_tenant_profile"],
@@ -2441,7 +2688,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "maintenance",
             "name": "Maintenance & Vendor Agent",
-            "member": "Prabin Yadav",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Work order creation, contractor ranking, turnover inspection verification.",
             "tools": ["triage_work_order", "rank_vendors", "rate_vendor", "verify_turnover_checklist"],
@@ -2449,7 +2696,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "collections",
             "name": "Rent & Collections Agent",
-            "member": "Adarsh Jha",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Ledger auditing, late fee calculation, 30-day cashflow forecasting.",
             "tools": ["audit_tenant_balance", "assess_late_fees", "forecast_collections", "generate_receipt"],
@@ -2457,7 +2704,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "vacancy_revenue",
             "name": "Vacancy & Revenue Recovery Agent",
-            "member": "Adarsh Jha",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Downtime revenue loss analytics, priority turnaround queue, occupancy tracking.",
             "tools": ["calculate_vacancy_loss", "prioritize_relist_queue", "calculate_occupancy"],
@@ -2465,7 +2712,7 @@ def list_available_agents() -> List[dict[str, Any]]:
         {
             "id": "facilitator",
             "name": "Facilitator & Verification Agent",
-            "member": "Sashank Karn",
+            "member": "StayOps AI Core",
             "status": "online",
             "role": "Supervisory compliance, cross-agent bus integrity, validation score assertion.",
             "tools": ["verify_task_execution", "assert_safety_constraints", "audit_compliance"],

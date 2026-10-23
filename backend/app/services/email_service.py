@@ -35,12 +35,54 @@ def dispatch_email(
     smtp_user = getattr(settings, "smtp_user", None) or getattr(settings, "smtp_username", None)
     smtp_pass = getattr(settings, "smtp_password", None)
     smtp_port = int(getattr(settings, "smtp_port", 587))
-    sender_from = getattr(settings, "smtp_from", None) or f"StayOps AI <notifications@stayops.ai>"
+    sender_from = (
+        getattr(settings, "smtp_from", None)
+        or getattr(settings, "smtp_from_email", None)
+        or getattr(settings, "email_from", None)
+        or "StayOps AI <noreply@sashankkarn.com.np>"
+    )
+    brevo_key = (getattr(settings, "brevo_api_key", None) or "").strip()
 
     status = "simulated_dev_mode"
     error = None
 
-    if smtp_host and smtp_user and smtp_pass:
+    # 1. Try Brevo HTTP API first (Works on Render/Cloud HTTPS 443)
+    if brevo_key:
+        try:
+            import httpx
+            sender_name = "StayOps Security"
+            clean_from = sender_from
+            if "<" in sender_from and ">" in sender_from:
+                sender_name = sender_from.split("<")[0].strip()
+                clean_from = sender_from.split("<")[1].replace(">", "").strip()
+
+            brevo_payload = {
+                "sender": {"name": sender_name, "email": clean_from},
+                "to": [{"email": to_email}],
+                "subject": subject,
+                "htmlContent": html_body,
+                "textContent": text_body,
+            }
+            res = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": brevo_key,
+                    "Content-Type": "application/json",
+                    "accept": "application/json",
+                },
+                json=brevo_payload,
+                timeout=10.0,
+            )
+            if res.status_code in (200, 201, 202):
+                status = "sent"
+                logger.info("[Email Service] Dispatched live email to %s via Brevo HTTP API (%s)", to_email, subject)
+            else:
+                logger.warning("[Email Service] Brevo API error (%s): %s", res.status_code, res.text)
+        except Exception as e:
+            logger.warning("[Email Service] Brevo HTTP dispatch failed: %s", e)
+
+    # 2. Fallback to standard SMTP if HTTP API wasn't sent
+    if status != "sent" and smtp_host and smtp_user and smtp_pass:
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
@@ -59,7 +101,7 @@ def dispatch_email(
             status = "failed"
             error = str(e)
             logger.warning("[Email Service] SMTP dispatch failed (%s), logged locally", e)
-    else:
+    elif status != "sent":
         logger.info("[Email Service: Dev Mode] Email to %s: '%s'", to_email, subject)
 
     audit_entry = {

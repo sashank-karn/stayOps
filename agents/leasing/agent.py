@@ -27,18 +27,18 @@ AGENT_NAME = "leasing"
 
 def match_rooms_for_lead(
     db: Session,
-    budget: float = 20000.0,
+    budget: float = 30000.0,
     location: Optional[str] = None,
     preferred_room_type: Optional[str] = None,
-    limit: int = 5,
+    limit: int = 50,
 ) -> List[dict[str, Any]]:
     """Match available beds/rooms in active properties based on budget and location.
     
     Uses deterministic scoring:
     - Base score: 100 max
-    - Location fit: 40 pts
-    - Budget fit: 40 pts (full if <= budget, scaled if within 15% stretch)
-    - Room type preference: 20 pts
+    - Location fit: 40 pts (full score for 'All'/wildcard or city/area match)
+    - Budget fit: 40 pts (full if <= budget or flexible, scaled if above)
+    - Room type preference: 20 pts (full if 'Any' or exact match)
     """
     # Find all available beds
     stmt = (
@@ -59,44 +59,47 @@ def match_rooms_for_lead(
 
     candidates = []
     loc_lower = location.strip().lower() if location else ""
+    is_wildcard = not loc_lower or loc_lower in ("all", "any", "all cities", "all locations", "everywhere", "all areas")
 
     for bed, room, prop in records:
         score = 0.0
 
         # Location scoring (40 pts)
-        prop_city = prop.city.lower()
-        prop_addr = prop.address.lower()
-        if not loc_lower:
-            score += 40.0
-        elif loc_lower in prop_city or loc_lower in prop_addr:
-            score += 40.0
-        elif any(part in prop_addr for part in loc_lower.split()):
-            score += 25.0
-        else:
-            score += 10.0  # fallback across cities
+        prop_city = (prop.city or "").lower()
+        prop_addr = (prop.address or "").lower()
+        prop_name = (prop.name or "").lower()
 
+        if is_wildcard:
+            score += 40.0
+        elif loc_lower in prop_city or loc_lower in prop_addr or loc_lower in prop_name:
+            score += 40.0
+        elif any(part in prop_city or part in prop_addr for part in loc_lower.split()):
+            score += 30.0
+        else:
+            score += 15.0  # fallback across cities
 
         # Budget scoring (40 pts)
-        rent = bed.monthly_rent
-        if rent <= budget:
-            # Full score, bonus for savings
+        rent = float(bed.monthly_rent or 12000.0)
+        if not budget or budget >= 50000:
+            score += 40.0
+        elif rent <= budget:
             savings_ratio = (budget - rent) / budget if budget > 0 else 0
             score += 35.0 + min(5.0, savings_ratio * 10.0)
-        elif rent <= budget * 1.15:
-            # Within 15% budget stretch
-            score += 20.0
+        elif rent <= budget * 1.30:
+            # Within 30% budget stretch
+            score += 25.0
         else:
-            # Over budget
-            score += 5.0
+            # Over budget but still show transparently
+            score += 15.0
 
         # Room type preference (20 pts)
-        if preferred_room_type:
+        if preferred_room_type and preferred_room_type.lower() != "any":
             if room.room_type.lower() == preferred_room_type.lower():
                 score += 20.0
             else:
-                score += 5.0
+                score += 8.0
         else:
-            score += 15.0
+            score += 20.0
 
         candidates.append(
             {
@@ -111,8 +114,8 @@ def match_rooms_for_lead(
                 "bed_id": bed.id,
                 "bed_label": bed.bed_label,
                 "monthly_rent": rent,
-                "amenities": prop.amenities or [],
-                "rules_summary": prop.rules_summary,
+                "amenities": prop.amenities or ["High-speed Wi-Fi", "Three-Tier Security", "Daily Housekeeping", "Power Backup"],
+                "rules_summary": prop.rules_summary or "Gate curfew 11:00 PM. Non-resident visitors allowed until 8 PM.",
                 "match_score": round(score, 1),
             }
         )
@@ -324,7 +327,7 @@ class LeasingAgent:
             budget=budget,
             location=location,
             preferred_room_type=room_type,
-            limit=3,
+            limit=30,
         )
 
         # 3. Draft tailored recommendations

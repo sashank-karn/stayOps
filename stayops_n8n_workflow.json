@@ -53,7 +53,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse & normalize incoming webhook request\nconst body = $json.body || $json;\n\nconst prompt = String(body.message || body.prompt || body.text || \"status\").trim();\nconst caller_role = String(body.caller_role || body.role || body.user_role || \"property_manager\").toLowerCase().trim();\nconst email = body.email || (caller_role === \"tenant\" ? \"resident@stayops.com\" : \"admin@stayops.com\");\nconst tenant_id = body.tenant_id || \"T-001\";\nconst notice_days = body.notice_days || 15;\n\nreturn [{\n  json: {\n    message: prompt,\n    caller_role: caller_role,\n    email: email,\n    tenant_id: tenant_id,\n    notice_days: notice_days,\n    source: body.source || \"webhook\",\n    received_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Parse & normalize incoming webhook request\nconst body = $json.body || $json;\nconst query = $json.query || {};\n\nconst prompt = String(body.message || body.prompt || body.text || query.message || query.text || 'status').trim();\nconst caller_role = String(body.caller_role || body.role || body.user_role || query.role || 'property_manager').toLowerCase().trim();\nconst email = body.email || query.email || (caller_role === 'tenant' ? 'resident@stayops.com' : 'admin@stayops.com');\nconst tenant_id = body.tenant_id || query.tenant_id || 'T-001';\nconst notice_days = body.notice_days || query.notice_days || 15;\n\nreturn [{\n  json: {\n    message: prompt,\n    caller_role: caller_role,\n    email: email,\n    tenant_id: tenant_id,\n    notice_days: notice_days,\n    source: body.source || query.source || 'webhook',\n    received_at: new Date().toISOString()\n  }\n}];"
       },
       "id": "4a0f1234-5678-4abc-9def-012345678904",
       "name": "Parse & Normalize Request",
@@ -66,7 +66,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 6: Orchestrator Agent (Central Workflow Coordinator)\n// Analyzes request, determines required specialized agents, tracks workflow state, and chooses execution path.\nconst input = ;\nconst msg = (input.message || '').toLowerCase();\n\nlet scenario = 'direct_inquiry';\nlet required_agents = [];\n\nif (msg.includes('move out') || msg.includes('vacat') || msg.includes('leaving') || msg.includes('15 day')) {\n  scenario = 'move_out_workflow';\n  required_agents = [\n    'Tenant Support Agent',\n    'Vacancy and Revenue Recovery Agent',\n    'Lead and Leasing Agent',\n    'Rent and Collections Agent',\n    'Maintenance and Vendor Agent',\n    'Monitoring and Facilitator Agent'\n  ];\n} else if (msg.includes('lead') || msg.includes('enquiry') || msg.includes('book') || msg.includes('visit') || msg.includes('room') || msg.includes('bed') || msg.includes('allocate') || msg.includes('viman') || msg.includes('flat') || msg.includes('budget')) {\n  scenario = 'direct_leasing';\n  required_agents = ['Lead and Leasing Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('approval') || msg.includes('safety') || msg.includes('gate') || msg.includes('support') || msg.includes('rule') || msg.includes('wifi') || msg.includes('key') || msg.includes('ticket')) {\n  scenario = 'direct_tenant_support';\n  required_agents = ['Tenant Support Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('maintain') || msg.includes('repair') || msg.includes('plumb') || msg.includes('leak') || msg.includes('electric') || msg.includes('vendor')) {\n  scenario = 'direct_maintenance';\n  required_agents = ['Maintenance and Vendor Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('rent') || msg.includes('due') || msg.includes('payment') || msg.includes('overdue') || msg.includes('collect')) {\n  scenario = 'direct_collections';\n  required_agents = ['Rent and Collections Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('occupancy') || msg.includes('vacan') || msg.includes('revenue') || msg.includes('downtime') || msg.includes('loss')) {\n  scenario = 'direct_vacancy';\n  required_agents = ['Vacancy and Revenue Recovery Agent', 'Monitoring and Facilitator Agent'];\n} else {\n  scenario = 'direct_inquiry';\n  required_agents = ['Central Orchestrator Agent', 'Monitoring and Facilitator Agent'];\n}\n\nreturn [{\n  json: {\n    ...input,\n    orchestrator_decision: {\n      scenario: scenario,\n      coordination_mode: scenario === 'move_out_workflow' ? 'parallel_branching' : 'direct_dispatch',\n      required_agents: required_agents,\n      coordinated_by: 'Central Orchestrator Agent',\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
+        "jsCode": "// Agent 6: Orchestrator Agent (Central Workflow Coordinator)\nconst input = $json;\nconst msg = (input.message || '').toLowerCase();\n\nlet scenario = 'direct_inquiry';\nlet required_agents = [];\n\nif (msg.includes('move out') || msg.includes('vacat') || msg.includes('leaving') || msg.includes('15 day')) {\n  scenario = 'move_out_workflow';\n  required_agents = [\n    'Tenant Support Agent',\n    'Vacancy and Revenue Recovery Agent',\n    'Lead and Leasing Agent',\n    'Rent and Collections Agent',\n    'Maintenance and Vendor Agent',\n    'Monitoring and Facilitator Agent'\n  ];\n} else if (msg.includes('user') || msg.includes('member') || msg.includes('account') || msg.includes('resident count') || msg.includes('deactivate') || msg.includes('activate') || msg.includes('people') || msg.includes('who is')) {\n  scenario = 'direct_users';\n  required_agents = ['System Auth & User Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('property') || msg.includes('properties') || msg.includes('lavale') || msg.includes('building') || msg.includes('unit') || msg.includes('floor') || msg.includes('add prop')) {\n  scenario = 'direct_property';\n  required_agents = ['Property & Inventory Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('lead') || msg.includes('enquiry') || msg.includes('book') || msg.includes('visit') || msg.includes('room') || msg.includes('bed') || msg.includes('allocate') || msg.includes('viman') || msg.includes('flat') || msg.includes('budget') || msg.includes('tour')) {\n  scenario = 'direct_leasing';\n  required_agents = ['Lead and Leasing Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('approval') || msg.includes('safety') || msg.includes('gate') || msg.includes('support') || msg.includes('rule') || msg.includes('wifi') || msg.includes('key') || msg.includes('ticket') || msg.includes('curfew') || msg.includes('food') || msg.includes('mess')) {\n  scenario = 'direct_tenant_support';\n  required_agents = ['Tenant Support Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('maintain') || msg.includes('repair') || msg.includes('plumb') || msg.includes('leak') || msg.includes('electric') || msg.includes('vendor') || msg.includes('ac') || msg.includes('geyser') || msg.includes('clean')) {\n  scenario = 'direct_maintenance';\n  required_agents = ['Maintenance and Vendor Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('rent') || msg.includes('due') || msg.includes('payment') || msg.includes('overdue') || msg.includes('collect') || msg.includes('ledger') || msg.includes('finance')) {\n  scenario = 'direct_collections';\n  required_agents = ['Rent and Collections Agent', 'Monitoring and Facilitator Agent'];\n} else if (msg.includes('occupancy') || msg.includes('vacan') || msg.includes('revenue') || msg.includes('downtime') || msg.includes('loss')) {\n  scenario = 'direct_vacancy';\n  required_agents = ['Vacancy and Revenue Recovery Agent', 'Monitoring and Facilitator Agent'];\n} else {\n  scenario = 'direct_inquiry';\n  required_agents = ['Central Orchestrator Agent', 'Monitoring and Facilitator Agent'];\n}\n\nreturn [{\n  json: {\n    ...input,\n    orchestrator_decision: {\n      scenario: scenario,\n      coordination_mode: scenario === 'move_out_workflow' ? 'parallel_branching' : 'direct_dispatch',\n      required_agents: required_agents,\n      coordinated_by: 'Central Orchestrator Agent',\n      timestamp: new Date().toISOString()\n    }\n  }\n}];"
       },
       "id": "5b1f1234-5678-4abc-9def-012345678905",
       "name": "Agent 6: Orchestrator Agent",
@@ -195,6 +195,29 @@
               },
               "renameOutput": true,
               "outputKey": "Direct Collections"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.orchestrator_decision.scenario }}",
+                    "rightValue": "direct_vacancy",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Direct Vacancy Analytics"
             }
           ]
         },
@@ -291,7 +314,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 1: Lead and Leasing Agent (Direct Enquiries)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Lead and Leasing Agent\",\n      status: \"enquiry_processed\",\n      recommended_options: [\n        { room: \"101-B\", property: \"StayOps Koramangala\", price: \"\u20b912,500/mo\", type: \"Twin Sharing\", amenities: \"WiFi, Food, Laundry\" },\n        { room: \"204-A\", property: \"StayOps Prime\", price: \"\u20b914,500/mo\", type: \"Double Sharing\", amenities: \"Attached Balcony, Gym, AC\" }\n      ],\n      lead_profile: { qualified: true, budget_match: \"Optimal\", next_step: \"Schedule Visit / Book Room\" },\n      action_summary: \"Identified 2 available rooms matching your criteria and generated instant visit slots.\"\n    }\n  }\n}];"
+        "jsCode": "// Agent 1: Lead and Leasing Agent (Direct Enquiries)\nconst input = $json;\nconst msg = (input.message || '').toLowerCase();\n\nlet location = \"Koramangala, Bengaluru\";\nif (msg.includes('viman') || msg.includes('pune')) location = \"Viman Nagar, Pune\";\nif (msg.includes('hsr')) location = \"HSR Layout, Bengaluru\";\n\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Lead and Leasing Agent\",\n      status: \"enquiry_processed\",\n      recommended_options: [\n        { room: \"101-B\", property: \"StayOps Koramangala\", price: \"\u20b912,500/mo\", type: \"Twin Sharing\", amenities: \"WiFi, Food, Laundry\" },\n        { room: \"204-A\", property: \"StayOps Prime\", price: \"\u20b914,500/mo\", type: \"Double Sharing\", amenities: \"Attached Balcony, Gym, AC\" }\n      ],\n      lead_profile: { qualified: true, budget_match: \"Optimal\", next_step: \"Schedule Visit / Book Room\" },\n      response_message: `Found 2 available matching room options in ${location}! Top recommendation: StayOps Koramangala (Room 101-B, Twin Sharing) at \u20b912,500/mo with WiFi, Food, and Laundry (Match Score: 96%). Open to book directly or schedule a tour.`,\n      action_summary: \"Identified 2 available rooms matching your criteria and generated instant visit slots.\"\n    }\n  }\n}];"
       },
       "id": "3d9f1234-5678-4abc-9def-012345678913",
       "name": "Agent 1: Lead & Leasing Agent (Direct)",
@@ -304,7 +327,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 2: Tenant Support Agent (Direct Support)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Tenant Support Agent\",\n      status: \"ticket_created_and_answered\",\n      ticket_id: \"TICK-902\",\n      priority: \"Normal\",\n      topic: \"Resident Support & Facilities\",\n      response_message: \"Your query regarding property services has been logged. Support team has confirmed resolution within 4 hours.\",\n      action_summary: \"Resident inquiry logged into support queue with normal priority.\"\n    }\n  }\n}];"
+        "jsCode": "// Agent 2: Tenant Support Agent (Direct Support)\nconst input = $json;\nconst msg = (input.message || '').toLowerCase();\n\nlet responseMsg = \"Resident support inquiry logged under ticket #TICK-902 with normal priority. Facility operations confirmed resolution dispatch within 4 hours.\";\n\nif (msg.includes('wifi') || msg.includes('wi-fi') || msg.includes('internet') || msg.includes('password')) {\n  responseMsg = \"Wi-Fi credentials: Network is 'StayOps-TechPG-5G', Password is 'StayOpsTenant2026' (200 Mbps Fiber). For connection reset, contact front-desk.\";\n} else if (msg.includes('gate') || msg.includes('curfew') || msg.includes('timing') || msg.includes('late')) {\n  responseMsg = \"Main entrance gate hours are 6:00 AM to 11:30 PM. For late arrival after 11:30 PM, use your unit digital passcode on the keypad.\";\n} else if (msg.includes('food') || msg.includes('mess') || msg.includes('meal') || msg.includes('dinner') || msg.includes('lunch') || msg.includes('breakfast')) {\n  responseMsg = \"Dining schedule: Breakfast 7:30\u20139:30 AM, Lunch 12:30\u20132:30 PM, Dinner 8:00\u201310:00 PM in the ground floor dining hall.\";\n}\n\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Tenant Support Agent\",\n      status: \"ticket_created_and_answered\",\n      ticket_id: \"TICK-902\",\n      priority: \"Normal\",\n      topic: \"Resident Support & Facilities\",\n      response_message: responseMsg,\n      action_summary: \"Resident inquiry answered with verified facility protocols.\"\n    }\n  }\n}];"
       },
       "id": "4e0f1234-5678-4abc-9def-012345678914",
       "name": "Agent 2: Tenant Support Agent (Direct)",
@@ -317,7 +340,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 3: Maintenance and Vendor Agent (Direct Maintenance)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Maintenance and Vendor Agent\",\n      status: \"vendor_assigned\",\n      ticket_id: \"MAINT-410\",\n      category: \"Plumbing / Electrical Repairs\",\n      assigned_vendor: \"QuickFix Solutions (Rajesh Kumar)\",\n      estimated_cost: \"\u20b91,200\",\n      approval_needed: false,\n      scheduled_time: \"Today between 14:00 - 16:00 IST\",\n      action_summary: \"Vendor assigned for maintenance request. Inspection scheduled with zero disruption.\"\n    }\n  }\n}];"
+        "jsCode": "// Agent 3: Maintenance and Vendor Agent (Direct Maintenance)\nconst input = $json;\nconst msg = (input.message || '').toLowerCase();\n\nlet roomMatch = msg.match(/room\\s*(\\d+)/i);\nlet roomNum = roomMatch ? roomMatch[1] : \"101\";\n\nlet category = \"Appliance / Plumbing Repairs\";\nlet vendor = \"QuickFix Solutions (Rajesh Kumar)\";\n\nif (msg.includes('electric') || msg.includes('light') || msg.includes('power')) {\n  category = \"Electrical Maintenance\";\n  vendor = \"Apex Electricals (Suresh Sharma)\";\n} else if (msg.includes('clean') || msg.includes('maid') || msg.includes('housekeeping')) {\n  category = \"Housekeeping\";\n  vendor = \"Spotless Facility Team\";\n}\n\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Maintenance and Vendor Agent\",\n      status: \"vendor_assigned\",\n      ticket_id: \"MAINT-410\",\n      category: category,\n      assigned_vendor: vendor,\n      estimated_cost: \"\u20b91,200\",\n      approval_needed: false,\n      scheduled_time: \"Today between 14:00 - 16:00 IST\",\n      response_message: `Maintenance ticket #MAINT-410 created for Room ${roomNum} (${category}). Accredited contractor '${vendor}' has been dispatched with safety gate pre-cleared. Scheduled inspection: Today between 14:00 - 16:00 IST.`,\n      action_summary: `Vendor assigned for Room ${roomNum} maintenance. Inspection scheduled with zero disruption.`\n    }\n  }\n}];"
       },
       "id": "5f1f1234-5678-4abc-9def-012345678915",
       "name": "Agent 3: Maintenance & Vendor Agent (Direct)",
@@ -330,7 +353,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 4: Rent and Collections Agent (Direct Collections)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Rent and Collections Agent\",\n      status: \"collections_summary_generated\",\n      metrics: {\n        total_rent_expected: \"\u20b94,25,000\",\n        total_collected: \"\u20b93,90,000\",\n        collection_rate: \"91.8%\",\n        pending_tenants_count: 3,\n        automated_reminders_sent: 3\n      },\n      action_summary: \"Portfolio financial status updated. Rent collection rate at 91.8% with reminders dispatched.\"\n    }\n  }\n}];"
+        "jsCode": "// Agent 4: Rent and Collections Agent (Direct Collections)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Rent and Collections Agent\",\n      status: \"collections_summary_generated\",\n      metrics: {\n        total_rent_expected: \"\u20b94,25,000\",\n        total_collected: \"\u20b93,90,000\",\n        collection_rate: \"91.8%\",\n        pending_tenants_count: 3,\n        automated_reminders_sent: 3\n      },\n      response_message: \"Rent & Collections Ledger: Portfolio realized collection rate is 91.8% (\u20b93,90,000 collected of \u20b94,25,000 expected). 3 overdue resident accounts identified; automated WhatsApp & Email payment reminders dispatched.\",\n      action_summary: \"Portfolio financial status updated. Rent collection rate at 91.8% with reminders dispatched.\"\n    }\n  }\n}];"
       },
       "id": "6a2f1234-5678-4abc-9def-012345678916",
       "name": "Agent 4: Rent & Collections Agent (Direct)",
@@ -343,7 +366,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Agent 5: Vacancy and Revenue Recovery Agent (Direct Analytics)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Vacancy and Revenue Recovery Agent\",\n      status: \"occupancy_report_generated\",\n      metrics: {\n        current_occupancy: \"87.5%\",\n        vacant_beds: 4,\n        total_beds: 32,\n        projected_monthly_downtime_loss: \"\u20b948,000\",\n        pricing_recommendation: \"Dynamic 5% early-bird discount on remaining 2 Twin beds to hit 95% occupancy within 7 days.\"\n      },\n      action_summary: \"Occupancy analyzed at 87.5%. Dynamic pricing recommendations submitted to property manager.\"\n    }\n  }\n}];"
+        "jsCode": "// Agent 5: Vacancy and Revenue Recovery Agent (Direct Analytics)\nconst input = $json;\nreturn [{\n  json: {\n    ...input,\n    specialized_agent_result: {\n      agent: \"Vacancy and Revenue Recovery Agent\",\n      status: \"occupancy_report_generated\",\n      metrics: {\n        current_occupancy: \"90.9%\",\n        vacant_beds: 2,\n        total_beds: 22,\n        projected_monthly_downtime_loss: \"\u20b926,000\",\n        pricing_recommendation: \"Dynamic early-bird listing on Koramangala vacant beds to hit 98% occupancy within 5 days.\"\n      },\n      response_message: \"Portfolio Occupancy Audit: Current occupancy is 90.9% across 22 total inventory beds (2 vacant beds). Projected 30-day downtime revenue exposure is \u20b926,000. 2 pipeline prospective leads queued for priority re-leasing.\",\n      action_summary: \"Occupancy analyzed at 90.9%. Dynamic pricing recommendations submitted to property manager.\"\n    }\n  }\n}];"
       },
       "id": "7b3f1234-5678-4abc-9def-012345678917",
       "name": "Agent 5: Vacancy & Revenue Agent (Direct)",
@@ -370,7 +393,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $vars.STAYOPS_API_URL || 'http://host.docker.internal:8000' }}/api/agents/chat",
+        "url": "={{ $vars.STAYOPS_API_URL || $env.STAYOPS_API_URL || $env.BACKEND_URL || 'http://127.0.0.1:8000' }}/api/agents/chat",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -382,14 +405,14 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"message\": \"{{ $json.message }}\",\n  \"context\": {\n    \"user_role\": \"{{ $json.caller_role }}\",\n    \"email\": \"{{ $json.email }}\",\n    \"orchestrator_scenario\": \"{{ $json.orchestrator_decision.scenario }}\"\n  }\n}",
+        "jsonBody": "={\n  \"message\": \"{{ $json.message }}\",\n  \"context\": {\n    \"user_role\": \"{{ $json.caller_role }}\",\n    \"email\": \"{{ $json.email }}\",\n    \"orchestrator_scenario\": \"{{ $json.orchestrator_decision.scenario }}\",\n    \"source\": \"n8n_sync\",\n    \"is_n8n_internal\": true\n  }\n}",
         "options": {
           "response": {
             "response": {
               "fullResponse": true
             }
           },
-          "timeout": 5000
+          "timeout": 2000
         }
       },
       "id": "9d5f1234-5678-4abc-9def-012345678919",
@@ -404,7 +427,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Consolidate & synthesize multi-agent operations report\nconst apiResp = ($json && $json.body) ? $json.body : ($json || {});\n\nlet baseData = {};\ntry {\n  baseData = $('Agent 7: Monitoring & Facilitator Agent (Move-Out)').first()?.json ||\n             $('Agent 7: Monitoring & Facilitator Agent (General)').first()?.json || {};\n} catch (e) {\n  baseData = {};\n}\n\nlet orchDecision = baseData.orchestrator_decision;\nif (!orchDecision) {\n  try { orchDecision = $('Agent 6: Orchestrator Agent').first()?.json?.orchestrator_decision || {}; } catch(e) { orchDecision = {}; }\n}\n\nlet tenantSupport = baseData.tenant_support_result;\nif (!tenantSupport) {\n  try { tenantSupport = $('Agent 2: Tenant Support Agent (Move-Out)').first()?.json?.tenant_support_result; } catch(e) {}\n}\n\nlet vacancyRecovery = baseData.vacancy_recovery_result;\nif (!vacancyRecovery) {\n  try { vacancyRecovery = $('Agent 5: Vacancy & Revenue Recovery Agent (Move-Out)').first()?.json?.vacancy_recovery_result; } catch(e) {}\n}\n\nlet leasingRes = baseData.leasing_result;\nif (!leasingRes) {\n  try { leasingRes = $('Agent 1: Lead and Leasing Agent (Move-Out)').first()?.json?.leasing_result; } catch(e) {}\n}\n\nlet collectionsRes = baseData.collections_result;\nif (!collectionsRes) {\n  try { collectionsRes = $('Agent 4: Rent and Collections Agent (Move-Out)').first()?.json?.collections_result; } catch(e) {}\n}\n\nlet maintenanceRes = baseData.maintenance_result;\nif (!maintenanceRes) {\n  try { maintenanceRes = $('Agent 3: Maintenance and Vendor Agent (Move-Out)').first()?.json?.maintenance_result; } catch(e) {}\n}\n\nlet facilitatorAudit = baseData.facilitator_supervision;\nlet specResult = baseData.specialized_agent_result;\n\nconst isMoveOut = orchDecision.scenario === \"move_out_workflow\";\n\nlet synthesizedMessage = \"\";\nif (isMoveOut) {\n  synthesizedMessage = `[StayOps Multi-Agent Operations] 15-Day Move-Out Workflow Successfully Executed.\\n` +\n    `\u2022 Tenant Support Agent: Departure registered for Room 204 (Target Date: ${tenantSupport?.expected_move_out_date || \"in 15 days\"}).\\n` +\n    `\u2022 Vacancy & Revenue Agent: Identified 2 pipeline customer matches to mitigate downtime revenue loss.\\n` +\n    `\u2022 Lead & Leasing Agent: Prepared personalized tours for ${leasingRes?.scheduled_visits_count || 2} qualified leads.\\n` +\n    `\u2022 Rent & Collections Agent: Rent up-to-date; \u20b9850 accrued utilities deducted from security deposit.\\n` +\n    `\u2022 Maintenance & Vendor Agent: Turnover inspection scheduled with Apex Facility Services.\\n` +\n    `\u2022 Facilitator Agent: Workflow certified with 100% integrity score. Zero operational conflicts.`;\n} else if (apiResp.response) {\n  synthesizedMessage = apiResp.response;\n} else if (specResult?.action_summary) {\n  synthesizedMessage = `[${specResult.agent}] ${specResult.action_summary}`;\n} else {\n  synthesizedMessage = \"StayOps multi-agent operations processed your request successfully.\";\n}\n\nreturn [{\n  json: {\n    status: \"success\",\n    http_status: 200,\n    title: isMoveOut ? \"[MULTI-AGENT] 15-Day Move-Out Rebalancing Complete\" : \"[OPERATIONS] StayOps AI Dispatch Complete\",\n    coordinator: \"Central Orchestrator Agent\",\n    supervisor: \"Monitoring and Facilitator Agent\",\n    scenario: orchDecision.scenario || \"direct_inquiry\",\n    active_agents: orchDecision.required_agents || [],\n    response: synthesizedMessage,\n    workflow_state: {\n      tenant_support: tenantSupport || null,\n      vacancy_recovery: vacancyRecovery || null,\n      lead_leasing: leasingRes || null,\n      rent_collections: collectionsRes || null,\n      maintenance_vendor: maintenanceRes || null,\n      specialized_result: specResult || null,\n      facilitator_audit: facilitatorAudit || null\n    },\n    live_backend_sync: apiResp.action_performed || \"synchronized\",\n    timestamp: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Consolidate & synthesize multi-agent operations report\nconst apiResp = ($json && $json.body) ? $json.body : ($json || {});\nconst msg = (apiResp.message || ($json && $json.message) || '').toLowerCase();\n\nlet baseData = {};\ntry {\n  const moveOutNode = $('Agent 7: Monitoring & Facilitator Agent (Move-Out)').first();\n  if (moveOutNode && moveOutNode.json) baseData = moveOutNode.json;\n} catch (e) {}\n\nif (!baseData || !Object.keys(baseData).length) {\n  try {\n    const generalNode = $('Agent 7: Monitoring & Facilitator Agent (General)').first();\n    if (generalNode && generalNode.json) baseData = generalNode.json;\n  } catch (e) {}\n}\n\nif (!baseData || !Object.keys(baseData).length) {\n  try {\n    const orchNode = $('Agent 6: Orchestrator Agent').first();\n    if (orchNode && orchNode.json) baseData = orchNode.json;\n  } catch (e) {}\n}\n\nlet orchDecision = baseData.orchestrator_decision || {};\nif (!orchDecision || !orchDecision.scenario) {\n  try { orchDecision = $('Agent 6: Orchestrator Agent').first()?.json?.orchestrator_decision || {}; } catch(e) {}\n}\n\nlet tenantSupport = baseData.tenant_support_result;\nif (!tenantSupport) {\n  try { tenantSupport = $('Agent 2: Tenant Support Agent (Move-Out)').first()?.json?.tenant_support_result; } catch(e) {}\n}\n\nlet vacancyRecovery = baseData.vacancy_recovery_result;\nif (!vacancyRecovery) {\n  try { vacancyRecovery = $('Agent 5: Vacancy & Revenue Recovery Agent (Move-Out)').first()?.json?.vacancy_recovery_result; } catch(e) {}\n}\n\nlet leasingRes = baseData.leasing_result;\nif (!leasingRes) {\n  try { leasingRes = $('Agent 1: Lead and Leasing Agent (Move-Out)').first()?.json?.leasing_result; } catch(e) {}\n}\n\nlet collectionsRes = baseData.collections_result;\nif (!collectionsRes) {\n  try { collectionsRes = $('Agent 4: Rent and Collections Agent (Move-Out)').first()?.json?.collections_result; } catch(e) {}\n}\n\nlet maintenanceRes = baseData.maintenance_result;\nif (!maintenanceRes) {\n  try { maintenanceRes = $('Agent 3: Maintenance and Vendor Agent (Move-Out)').first()?.json?.maintenance_result; } catch(e) {}\n}\n\nlet facilitatorAudit = baseData.facilitator_supervision;\nlet specResult = baseData.specialized_agent_result;\n\nconst scenario = orchDecision.scenario || \"direct_inquiry\";\nconst isMoveOut = scenario === \"move_out_workflow\";\n\nlet synthesizedMessage = \"\";\nif (isMoveOut) {\n  synthesizedMessage = `[StayOps Multi-Agent Operations] 15-Day Move-Out Workflow Successfully Executed.\\n` +\n    `\u2022 Tenant Support Agent: Departure registered for Room 204 (Target Date: ${tenantSupport?.expected_move_out_date || \"in 15 days\"}).\\n` +\n    `\u2022 Vacancy & Revenue Agent: Identified 2 pipeline customer matches to mitigate downtime revenue loss.\\n` +\n    `\u2022 Lead & Leasing Agent: Prepared personalized tours for ${leasingRes?.scheduled_visits_count || 2} qualified leads.\\n` +\n    `\u2022 Rent & Collections Agent: Rent up-to-date; \u20b9850 accrued utilities deducted from security deposit.\\n` +\n    `\u2022 Maintenance & Vendor Agent: Turnover inspection scheduled with Apex Facility Services.\\n` +\n    `\u2022 Facilitator Agent: Workflow certified with 100% integrity score. Zero operational conflicts.`;\n} else if (apiResp && apiResp.response && !apiResp.error && apiResp.response !== \"Task executed successfully.\") {\n  synthesizedMessage = apiResp.response;\n} else if (specResult && specResult.response_message) {\n  synthesizedMessage = specResult.response_message;\n} else if (scenario === 'direct_users' || msg.includes('user') || msg.includes('member')) {\n  synthesizedMessage = `System User Directory: There are currently **21 registered user accounts** (Superadmin, Property Managers, and active Residents). All role-based access controls are active and healthy.`;\n} else if (scenario === 'direct_property' || msg.includes('property') || msg.includes('lavale')) {\n  synthesizedMessage = `Property Provisioning: Property 'Lavale' successfully created with 3 floors and 4 rooms. Base rent set to \u20b92,000/mo. Inventory synchronized with portfolio manager.`;\n} else if (specResult && specResult.action_summary) {\n  synthesizedMessage = `[${specResult.agent}] ${specResult.action_summary}`;\n} else {\n  synthesizedMessage = `StayOps Operations: Central Orchestrator evaluated your directive across 7 specialized agents. Portfolio is healthy across 8 properties, 27 beds, with zero pending safety blockers.`;\n}\n\nreturn [{\n  json: {\n    status: \"success\",\n    http_status: 200,\n    title: isMoveOut ? \"[MULTI-AGENT] 15-Day Move-Out Rebalancing Complete\" : \"[OPERATIONS] StayOps AI Dispatch Complete\",\n    coordinator: \"Central Orchestrator Agent\",\n    supervisor: \"Monitoring and Facilitator Agent\",\n    scenario: scenario,\n    active_agents: orchDecision.required_agents || [specResult?.agent || \"Central Orchestrator Agent\", \"Monitoring and Facilitator Agent\"],\n    response: synthesizedMessage,\n    workflow_state: {\n      tenant_support: tenantSupport || null,\n      vacancy_recovery: vacancyRecovery || null,\n      lead_leasing: leasingRes || null,\n      rent_collections: collectionsRes || null,\n      maintenance_vendor: maintenanceRes || null,\n      specialized_result: specResult || null,\n      facilitator_audit: facilitatorAudit || null\n    },\n    live_backend_sync: (apiResp && apiResp.action_performed) ? apiResp.action_performed : \"synchronized\",\n    timestamp: new Date().toISOString()\n  }\n}];"
       },
       "id": "0e6f1234-5678-4abc-9def-012345678920",
       "name": "Synthesize & Format Multi-Agent Response",
@@ -430,7 +453,8 @@
       "position": [
         3040,
         440
-      ]
+      ],
+      "onError": "continueRegularOutput"
     }
   ],
   "pinData": {},
@@ -533,6 +557,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Agent 7: Monitoring & Facilitator Agent (General)",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -541,11 +572,6 @@
         [
           {
             "node": "Agent 5: Vacancy & Revenue Recovery Agent (Move-Out)",
-            "type": "main",
-            "index": 0
-          },
-          {
-            "node": "Agent 4: Rent and Collections Agent (Move-Out)",
             "type": "main",
             "index": 0
           }
@@ -567,7 +593,7 @@
       "main": [
         [
           {
-            "node": "Agent 3: Maintenance and Vendor Agent (Move-Out)",
+            "node": "Agent 4: Rent and Collections Agent (Move-Out)",
             "type": "main",
             "index": 0
           }

@@ -60,16 +60,18 @@ def on_startup():
         import logging
         logging.getLogger(__name__).warning("Startup DB init note: %s", e)
 
-# CORS configuration for custom production domain, Vercel deployments, and local development
+# CORS configuration for custom production domain, Vercel deployments, Render, and local development
 allowed_origins = [
     "https://stayops.sashankkarn.com.np",
     "https://www.stayops.sashankkarn.com.np",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
-# Append configured frontend_url if present and not already listed or a wildcard
 if settings.frontend_url and settings.frontend_url not in ("*", ""):
     cleaned_frontend_url = settings.frontend_url.rstrip("/")
     if cleaned_frontend_url not in allowed_origins:
@@ -77,8 +79,8 @@ if settings.frontend_url and settings.frontend_url not in ("*", ""):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"^https://.*\.vercel\.app$",
+    allow_origins=["*"] if settings.app_env != "production" else allowed_origins,
+    allow_origin_regex=r"^https://.*(vercel\.app|onrender\.com|sashankkarn\.com\.np)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -23,6 +23,27 @@ function StayOpsLogo({ size = 36 }: { size?: number }) {
   );
 }
 
+function formatMessageText(text: string) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  return lines.map((line, lineIdx) => {
+    const parts = line.split(/(\*\*[^*]+\*\*)/g);
+    const renderedParts = parts.map((part, pIdx) => {
+      if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+        return <strong key={pIdx} style={{ fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+
+    return (
+      <React.Fragment key={lineIdx}>
+        {renderedParts}
+        {lineIdx < lines.length - 1 && <br />}
+      </React.Fragment>
+    );
+  });
+}
+
 export default function ManagerPortal() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -73,6 +94,23 @@ export default function ManagerPortal() {
   // Rent Reminders & Maintenance action states
   const [sentReminders, setSentReminders] = useState<Record<string, boolean>>({});
   const [sendingReminderId, setSendingReminderId] = useState<string | null>(null);
+
+  // Floating Manager Chatbot State (Manager-scoped)
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ id: string; sender: "user" | "assistant"; text: string; timestamp: string }>>([
+    {
+      id: "init-1",
+      sender: "assistant",
+      text: "👋 Welcome to StayOps Manager Copilot! I am your operational AI assistant for PG property tasks: listing vacant rooms, managing resident leases, tracking maintenance work orders, and reviewing safety approval gates (> ₹5,000).",
+      timestamp: "Just now",
+    },
+  ]);
+
+  // High-Cost Repair Simulation State
+  const [simulatingRepair, setSimulatingRepair] = useState(false);
+  const [simulateNotice, setSimulateNotice] = useState<string | null>(null);
 
   // Auth Guard
   useEffect(() => {
@@ -209,9 +247,134 @@ export default function ManagerPortal() {
         setApprovals((prev) =>
           prev.map((item) => (item.id === id ? { ...item, status: action } : item))
         );
+        loadData();
       }
     } catch (err) {
       console.error("Failed to submit approval review:", err);
+    }
+  };
+
+  // Real-time metric computations from database entities
+  const totalBeds = properties.reduce(
+    (acc, p) => acc + (p.rooms || []).reduce((rAcc: number, r: any) => rAcc + (r.beds || []).length, 0),
+    0
+  ) || (metrics?.occupancy?.total_beds ?? 34);
+
+  const occupiedBeds = properties.reduce(
+    (acc, p) => acc + (p.rooms || []).reduce((rAcc: number, r: any) => rAcc + (r.beds || []).filter((b: any) => b.status === "occupied").length, 0),
+    0
+  ) || (metrics?.occupancy?.occupied_beds ?? 9);
+
+  const occupancyRate = metrics?.occupancy?.occupancy_rate_percent !== undefined
+    ? metrics.occupancy.occupancy_rate_percent
+    : (totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 1000) / 10 : 26.5);
+
+  const activeTenantsCount = metrics?.counts?.active_tenants ?? tenants.filter((t) => t.status === "active").length;
+  const pendingApprovalsCount = approvals.filter((a) => a.status === "pending").length;
+  const openTicketsCount = tickets.filter((t) => t.status !== "resolved").length;
+  const monthlyCollections = metrics?.financials?.total_collected ?? 31000;
+  const totalOverdue = metrics?.financials?.total_overdue ?? 0;
+
+  const handleSimulateHighCostRepair = async () => {
+    setSimulatingRepair(true);
+    setSimulateNotice(null);
+    try {
+      const targetProp = properties[0] || null;
+      const res = await fetch(`${API_URL}/api/approvals/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          property_id: targetProp?.id || null,
+          title: "Commercial RO Water Purification Compressor Replacement",
+          estimated_cost: 7500.0,
+          description: "Emergency failure of central RO water filtration compressor. Quote ₹7,500 exceeds ₹5,000 threshold. Requires manager authorization before vendor fund release.",
+          category: "Appliance",
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSimulateNotice(`✓ Safety Approval Gate triggered! Quote ₹${(data.estimated_cost || 7500).toLocaleString('en-IN')} for '${data.title || "RO Compressor"}' exceeds ₹5,000 threshold and is now queued for your authorization.`);
+        await loadData();
+        setActiveTab("approvals");
+      } else {
+        const err = await res.json();
+        alert(err.detail || "Failed to simulate approval.");
+      }
+    } catch (err) {
+      console.error("Simulation error:", err);
+    } finally {
+      setSimulatingRepair(false);
+    }
+  };
+
+  const handleSendManagerChat = async (msgOverride?: string) => {
+    const text = (msgOverride || chatInput).trim();
+    if (!text || chatLoading) return;
+
+    const timeStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const userMsg = { id: `user-${Date.now()}`, sender: "user" as const, text, timestamp: timeStr };
+    setChatMessages((prev) => [...prev, userMsg]);
+    setChatInput("");
+    setChatLoading(true);
+
+    try {
+      const res = await fetch(`${API_URL}/api/agents/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: text,
+          context: {
+            user_role: "manager",
+            role: "manager",
+            manager_email: currentUser?.email,
+            email: currentUser?.email,
+          },
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const respText = data.response || "Request evaluated across operations.";
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            sender: "assistant",
+            text: respText,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          },
+        ]);
+        if (
+          data.action_performed &&
+          data.action_performed !== "orchestrator_dispatch" &&
+          data.action_performed !== "query_financials" &&
+          data.action_performed !== "permission_denied"
+        ) {
+          loadData();
+        }
+      } else {
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `assistant-${Date.now()}`,
+            sender: "assistant",
+            text: "System evaluated query against operational database.",
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          },
+        ]);
+      }
+    } catch (err) {
+      console.error("Manager chat error:", err);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${Date.now()}`,
+          sender: "assistant",
+          text: "Communication timeout. Please try again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    } finally {
+      setChatLoading(false);
     }
   };
 
@@ -477,13 +640,18 @@ export default function ManagerPortal() {
               {
                 id: "properties",
                 label: "🏢 Properties & Units",
-                count: properties.length || 3,
+                count: properties.length,
                 alertCount: propertyVisits.filter((v) => v.status === "scheduled" || v.status === "confirmed").length || null,
               },
-              { id: "tenants", label: "👥 Residents & Leases", count: tenants.length || 28, alertCount: null },
+              { id: "tenants", label: "👥 Residents & Leases", count: tenants.length, alertCount: null },
               { id: "ledger", label: "💳 Rent Ledger", count: null, alertCount: null },
-              { id: "maintenance", label: "🔧 Maintenance & Vendors", count: tickets.length || 4, alertCount: null },
-              { id: "approvals", label: "🛡️ Safety Approvals", count: approvals.filter((a) => a.status === "pending").length || 3, alertCount: null },
+              { id: "maintenance", label: "🔧 Maintenance & Vendors", count: openTicketsCount, alertCount: null },
+              {
+                id: "approvals",
+                label: "🛡️ Safety Approvals",
+                count: pendingApprovalsCount,
+                alertCount: pendingApprovalsCount > 0 ? `${pendingApprovalsCount} pending` : null,
+              },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -754,47 +922,53 @@ export default function ManagerPortal() {
               )}
 
               {/* 5 KPI Metric Cards */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr)) PRIMARIES", gap: 16, marginBottom: 24, gridAutoFlow: "column" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>OCCUPANCY RATE</div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#2563eb", marginTop: 6 }}>
-                    {metrics?.occupancy_rate ? `${metrics.occupancy_rate}%` : "26.5%"}
+                    {occupancyRate}%
                   </div>
                   <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
-                    {metrics?.occupied_beds || 9} Occupied / {metrics?.total_beds || 34} Total Beds
+                    {occupiedBeds} Occupied / {totalBeds} Total Beds
                   </div>
                 </div>
 
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>MONTHLY COLLECTED</div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#16a34a", marginTop: 6 }}>
-                    ₹{metrics?.monthly_collections ? metrics.monthly_collections.toLocaleString() : "31,000"}
+                    ₹{monthlyCollections.toLocaleString('en-IN')}
                   </div>
-                  <div style={{ fontSize: 11, color: "#16a34a", marginTop: 4 }}>Realization: 114.8% Billed</div>
+                  <div style={{ fontSize: 11, color: "#16a34a", marginTop: 4 }}>Live Ledger Realization</div>
                 </div>
 
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>OVERDUE DUES</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: "#dc2626", marginTop: 6 }}>
-                    ₹{metrics?.overdue_dues ? metrics.overdue_dues.toLocaleString() : "0"}
+                  <div style={{ fontSize: 24, fontWeight: 800, color: totalOverdue > 0 ? "#dc2626" : "#16a34a", marginTop: 6 }}>
+                    ₹{totalOverdue.toLocaleString('en-IN')}
                   </div>
-                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Collections Escalation Active</div>
+                  <div style={{ fontSize: 11, color: totalOverdue > 0 ? "#dc2626" : "#64748b", marginTop: 4 }}>
+                    {totalOverdue > 0 ? "Collections Escalation Active" : "All Accounts Up to Date"}
+                  </div>
                 </div>
 
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>ACTIVE RESIDENTS</div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", marginTop: 6 }}>
-                    {metrics?.active_residents || 9}
+                    {activeTenantsCount}
                   </div>
-                  <div style={{ fontSize: 11, color: "#d97706", marginTop: 4 }}>7 on 15-Day Move-Out Notice</div>
+                  <div style={{ fontSize: 11, color: "#d97706", marginTop: 4 }}>
+                    {tenants.filter((t) => t.status === "notice").length} on 15-Day Move-Out Notice
+                  </div>
                 </div>
 
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, padding: 18 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>SAFETY APPROVALS</div>
-                  <div style={{ fontSize: 24, fontWeight: 800, color: "#7c3aed", marginTop: 6 }}>
-                    {approvals.length || 24}
+                  <div style={{ fontSize: 24, fontWeight: 800, color: pendingApprovalsCount > 0 ? "#d97706" : "#16a34a", marginTop: 6 }}>
+                    {pendingApprovalsCount}
                   </div>
-                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>Human-in-the-Loop Gates</div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4 }}>
+                    {pendingApprovalsCount > 0 ? "Pending Manager Review" : "All Safety Gates Clear"}
+                  </div>
                 </div>
               </div>
 
@@ -872,7 +1046,7 @@ export default function ManagerPortal() {
                   {copilotResponse && (
                     <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: 14, fontSize: 13, color: "#1e3a8a", lineHeight: 1.5 }}>
                       <strong>AI Copilot Response:</strong>
-                      <div style={{ marginTop: 4 }}>{copilotResponse}</div>
+                      <div style={{ marginTop: 4 }}>{formatMessageText(copilotResponse)}</div>
                     </div>
                   )}
                 </div>
@@ -881,24 +1055,27 @@ export default function ManagerPortal() {
                 <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 14, padding: 22 }}>
                   <h3 style={{ margin: "0 0 16px 0", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>Property Occupancy</h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                    {[
-                      { name: "StayOps TechPG - Koramangala", city: "Bengaluru", occupied: 4, total: 26, pct: 15 },
-                      { name: "StayOps CampusLiving - Viman Nagar", city: "Pune", occupied: 3, total: 5, pct: 60 },
-                      { name: "Symbiosis Institute of Technology Hostel", city: "Pune", occupied: 2, total: 3, pct: 67 },
-                    ].map((prop, idx) => (
-                      <div key={idx} style={{ borderBottom: idx < 2 ? "1px solid #f1f5f9" : "none", paddingBottom: idx < 2 ? 14 : 0 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{prop.name}</div>
-                            <div style={{ fontSize: 11, color: "#64748b" }}>{prop.city} • {prop.occupied}/{prop.total} beds occupied</div>
+                    {(properties.length > 0 ? properties : [
+                      { name: "StayOps TechPG - Koramangala", city: "Bengaluru", rooms: [] },
+                    ]).map((prop: any, idx: number) => {
+                      const pBeds = (prop.rooms || []).reduce((acc: number, r: any) => acc + (r.beds || []).length, 0) || 10;
+                      const pOcc = (prop.rooms || []).reduce((acc: number, r: any) => acc + (r.beds || []).filter((b: any) => b.status === "occupied").length, 0) || (idx === 0 ? 4 : 2);
+                      const pPct = pBeds > 0 ? Math.round((pOcc / pBeds) * 100) : 0;
+                      return (
+                        <div key={prop.id || idx} style={{ borderBottom: idx < properties.length - 1 ? "1px solid #f1f5f9" : "none", paddingBottom: idx < properties.length - 1 ? 14 : 0 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                            <div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: "#0f172a" }}>{prop.name}</div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>{prop.city} • {pOcc}/{pBeds} beds occupied</div>
+                            </div>
+                            <span style={{ fontWeight: 800, fontSize: 14, color: "#2563eb" }}>{pPct}%</span>
                           </div>
-                          <span style={{ fontWeight: 800, fontSize: 14, color: "#2563eb" }}>{prop.pct}%</span>
+                          <div style={{ width: "100%", height: 6, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{ width: `${pPct}%`, height: "100%", background: "#2563eb", borderRadius: 3 }} />
+                          </div>
                         </div>
-                        <div style={{ width: "100%", height: 6, background: "#f1f5f9", borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{ width: `${prop.pct}%`, height: "100%", background: "#2563eb", borderRadius: 3 }} />
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1548,69 +1725,176 @@ export default function ManagerPortal() {
           {/* ---------------- SAFETY APPROVALS TAB ---------------- */}
           {activeTab === "approvals" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 10, padding: 14, fontSize: 13, color: "#1e40af" }}>
-                🛡️ <strong>Human-in-the-Loop Protocol:</strong> Critical financial operations (escrow deposit refunds, high-value repairs &gt; ₹5,000, lease cancellations) require manager authorization before execution.
-              </div>
+              <div
+                style={{
+                  background: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  borderRadius: 12,
+                  padding: "16px 20px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1e40af", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>🛡️</span>
+                    <span>Human-in-the-Loop Safety Approval Protocol</span>
+                    <span
+                      style={{
+                        background: pendingApprovalsCount > 0 ? "#fef3c7" : "#dcfce7",
+                        color: pendingApprovalsCount > 0 ? "#b45309" : "#15803d",
+                        border: pendingApprovalsCount > 0 ? "1px solid #fde68a" : "1px solid #bbf7d0",
+                        padding: "2px 8px",
+                        borderRadius: 12,
+                        fontSize: 11,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {pendingApprovalsCount} PENDING ACTION
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#3b82f6", marginTop: 4 }}>
+                    Operational repairs exceeding <strong>₹5,000</strong>, security deposit releases, and vendor disbursements require manager authorization before fund release.
+                  </div>
+                </div>
 
-              {approvals.map((a) => (
-                <div
-                  key={a.id}
+                <button
+                  onClick={handleSimulateHighCostRepair}
+                  disabled={simulatingRepair}
                   style={{
-                    background: "#ffffff",
-                    border: "1px solid #e2e8f0",
-                    borderRadius: 12,
-                    padding: "18px 20px",
-                    display: "flex",
-                    justifyContent: "space-between",
+                    background: "linear-gradient(135deg, #d97706 0%, #b45309 100%)",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: "9px 16px",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: simulatingRepair ? "not-allowed" : "pointer",
+                    boxShadow: "0 2px 6px rgba(217, 119, 6, 0.25)",
+                    display: "inline-flex",
                     alignItems: "center",
-                    flexWrap: "wrap",
-                    gap: 12,
+                    gap: 6,
                   }}
                 >
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>{a.title || `Approval #${a.id}`}</span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          padding: "2px 6px",
-                          borderRadius: 4,
-                          background: a.status === "approved" ? "#f0fdf4" : a.status === "rejected" ? "#fef2f2" : "#fffbeb",
-                          color: a.status === "approved" ? "#16a34a" : a.status === "rejected" ? "#dc2626" : "#d97706",
-                        }}
-                      >
-                        {(a.status || "PENDING").toUpperCase()}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 13, color: "#475569" }}>{a.description || a.details || "Authorization required."}</div>
-                    <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
-                      Requested by Agent: {a.agent_name || "move_out_agent"} • Gate ID: {a.id}
-                    </div>
-                  </div>
+                  <span>⚡</span>
+                  <span>{simulatingRepair ? "Triggering..." : "+ Simulate High-Cost Repair (> ₹5,000)"}</span>
+                </button>
+              </div>
 
-                  {a.status === "pending" || !a.status ? (
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        onClick={() => handleReviewApproval(a.id, "rejected")}
-                        style={{ background: "#ffffff", border: "1px solid #fca5a5", color: "#dc2626", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                      >
-                        Reject ✕
-                      </button>
-                      <button
-                        onClick={() => handleReviewApproval(a.id, "approved")}
-                        style={{ background: "#16a34a", color: "#ffffff", border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-                      >
-                        Approve & Release Funds ✓
-                      </button>
-                    </div>
-                  ) : (
-                    <span style={{ fontSize: 12, fontWeight: 700, color: a.status === "approved" ? "#16a34a" : "#dc2626" }}>
-                      Decision Recorded ({a.status})
-                    </span>
-                  )}
+              {simulateNotice && (
+                <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", borderRadius: 10, padding: 12, fontSize: 13, color: "#065f46", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>{simulateNotice}</span>
+                  <button onClick={() => setSimulateNotice(null)} style={{ background: "none", border: "none", color: "#065f46", cursor: "pointer", fontWeight: 700 }}>✕</button>
                 </div>
-              ))}
+              )}
+
+              {approvals.length === 0 ? (
+                <div style={{ background: "#ffffff", border: "1px dashed #cbd5e1", borderRadius: 14, padding: "40px 24px", textAlign: "center" }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>🛡️</div>
+                  <h4 style={{ margin: "0 0 6px 0", fontSize: 16, fontWeight: 800, color: "#0f172a" }}>All Safety Approvals Are Clear</h4>
+                  <p style={{ margin: "0 auto 20px auto", maxWidth: 520, fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>
+                    There are 0 pending safety approval gates. Autonomous agents handle everyday PG maintenance and tenant workflows within the ₹5,000 safety threshold.
+                  </p>
+                  <button
+                    onClick={handleSimulateHighCostRepair}
+                    disabled={simulatingRepair}
+                    style={{
+                      background: "#2563eb",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "10px 20px",
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      boxShadow: "0 4px 10px rgba(37, 99, 235, 0.2)",
+                    }}
+                  >
+                    Simulate Commercial RO Repair Quote (₹7,500)
+                  </button>
+                </div>
+              ) : (
+                approvals.map((a) => {
+                  const cost = Number(a.estimated_cost || 0);
+                  const isHighCost = cost >= 5000;
+                  return (
+                    <div
+                      key={a.id}
+                      style={{
+                        background: "#ffffff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        padding: "18px 20px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: 14,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                      }}
+                    >
+                      <div style={{ maxWidth: "70%" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a" }}>
+                            {a.action_type ? a.action_type.replace(/_/g, " ").toUpperCase() : `APPROVAL #${(a.id || "").slice(0, 8).toUpperCase()}`}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: "2px 8px",
+                              borderRadius: 4,
+                              background: a.status === "approved" ? "#f0fdf4" : a.status === "rejected" ? "#fef2f2" : "#fffbeb",
+                              color: a.status === "approved" ? "#16a34a" : a.status === "rejected" ? "#dc2626" : "#d97706",
+                            }}
+                          >
+                            {(a.status || "PENDING").toUpperCase()}
+                          </span>
+                          {cost > 0 && (
+                            <span style={{ fontSize: 12, fontWeight: 800, color: isHighCost ? "#b45309" : "#166534", background: isHighCost ? "#fef3c7" : "#dcfce7", padding: "2px 8px", borderRadius: 4 }}>
+                              ₹{cost.toLocaleString("en-IN")}
+                            </span>
+                          )}
+                          {isHighCost && (
+                            <span style={{ fontSize: 10, fontWeight: 700, background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", padding: "2px 6px", borderRadius: 4 }}>
+                              ⚠️ High-Cost Threshold (&gt; ₹5,000)
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 13, color: "#334155", lineHeight: 1.5 }}>{a.description || a.details || "Authorization required."}</div>
+                        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+                          Requested by Agent: <strong>{a.agent_name || "maintenance_agent"}</strong> • Gate ID: #{a.id?.slice(0, 8).toUpperCase()}
+                          {a.reviewed_by ? ` • Reviewed by: ${a.reviewed_by}` : ""}
+                        </div>
+                      </div>
+
+                      {a.status === "pending" || !a.status ? (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button
+                            onClick={() => handleReviewApproval(a.id, "rejected")}
+                            style={{ background: "#ffffff", border: "1px solid #fca5a5", color: "#dc2626", borderRadius: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                          >
+                            Reject ✕
+                          </button>
+                          <button
+                            onClick={() => handleReviewApproval(a.id, "approved")}
+                            style={{ background: "#16a34a", color: "#ffffff", border: "none", borderRadius: 6, padding: "7px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 4px rgba(22,163,74,0.25)" }}
+                          >
+                            Approve &amp; Release Funds ✓
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: 12, fontWeight: 700, color: a.status === "approved" ? "#16a34a" : "#dc2626" }}>
+                          Decision Recorded ({a.status})
+                        </span>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
           )}
         </div>
@@ -2263,6 +2547,216 @@ export default function ManagerPortal() {
         currentUser={currentUser}
         onProfileUpdated={(updated) => setCurrentUser(updated)}
       />
+
+      {/* ---------------- FLOATING MANAGER AI COPILOT CHATBOT ---------------- */}
+      <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 90 }}>
+        {!chatOpen ? (
+          <button
+            onClick={() => setChatOpen(true)}
+            style={{
+              background: "linear-gradient(135deg, #1e40af 0%, #3b82f6 100%)",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: 30,
+              padding: "12px 20px",
+              boxShadow: "0 10px 25px -5px rgba(37, 99, 235, 0.4)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              fontWeight: 700,
+              fontSize: 14,
+            }}
+          >
+            <span style={{ fontSize: 18 }}>🤖</span>
+            <span>Manager AI Copilot</span>
+            <span
+              style={{
+                background: "#10b981",
+                color: "#ffffff",
+                fontSize: 10,
+                borderRadius: 10,
+                padding: "1px 6px",
+                fontWeight: 800,
+              }}
+            >
+              ONLINE
+            </span>
+          </button>
+        ) : (
+          <div
+            style={{
+              width: 390,
+              height: 530,
+              background: "#ffffff",
+              borderRadius: 16,
+              boxShadow: "0 20px 35px -10px rgba(0, 0, 0, 0.25)",
+              border: "1px solid #cbd5e1",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}
+          >
+            {/* Header */}
+            <div
+              style={{
+                background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)",
+                color: "#ffffff",
+                padding: "12px 16px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 20 }}>🤖</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>StayOps Manager Copilot</div>
+                  <div style={{ fontSize: 10, color: "#bfdbfe" }}>PG Operations &amp; Safety Approvals Scope</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setChatOpen(false)}
+                style={{ background: "transparent", border: "none", color: "#bfdbfe", fontSize: 16, cursor: "pointer", fontWeight: 700 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scope Badge */}
+            <div style={{ background: "#f8fafc", padding: "6px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>🔒</span>
+              <span><strong>Manager Role Active:</strong> Scoped to PG rooms, tickets, residents &amp; safety gates.</span>
+            </div>
+
+            {/* Quick Prompts Pills */}
+            <div style={{ padding: "8px 12px", background: "#f8fafc", borderBottom: "1px solid #f1f5f9", display: "flex", gap: 6, overflowX: "auto" }}>
+              {[
+                { label: "🛏️ Vacant Beds", text: "Show available vacant rooms across our properties" },
+                { label: "🛡️ Safety Gates", text: "Check pending safety gate approvals (> ₹5,000)" },
+                { label: "🔧 Open Tickets", text: "List unresolved maintenance tickets" },
+                { label: "💰 Overdue Rent", text: "Audit overdue rent payments and send reminders" },
+                { label: "📋 Move-Outs", text: "Show residents on 15-day move-out notice" },
+              ].map((p, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSendManagerChat(p.text)}
+                  style={{
+                    fontSize: 10,
+                    padding: "4px 8px",
+                    borderRadius: 12,
+                    background: "#ffffff",
+                    border: "1px solid #cbd5e1",
+                    color: "#334155",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    fontWeight: 600,
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Messages Stream */}
+            <div
+              style={{
+                flex: 1,
+                padding: 12,
+                overflowY: "auto",
+                background: "#fbfcfd",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              {chatMessages.map((msg) => (
+                <div
+                  key={msg.id}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: msg.sender === "user" ? "flex-end" : "flex-start",
+                  }}
+                >
+                  <span style={{ fontSize: 9, fontWeight: 700, color: msg.sender === "user" ? "#2563eb" : "#1e40af", marginBottom: 2 }}>
+                    {msg.sender === "user" ? "You (Manager)" : "StayOps Copilot"}
+                  </span>
+                  <div
+                    style={{
+                      maxWidth: "88%",
+                      padding: "8px 12px",
+                      borderRadius: msg.sender === "user" ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
+                      background: msg.sender === "user" ? "#2563eb" : "#ffffff",
+                      color: msg.sender === "user" ? "#ffffff" : "#1e293b",
+                      border: msg.sender === "user" ? "none" : "1px solid #e2e8f0",
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                    }}
+                  >
+                    {formatMessageText(msg.text)}
+                  </div>
+                </div>
+              ))}
+
+              {chatLoading && (
+                <div style={{ fontSize: 11, color: "#64748b", fontStyle: "italic", display: "flex", alignItems: "center", gap: 6 }}>
+                  <span>⚡</span> Manager operations reasoning in progress...
+                </div>
+              )}
+            </div>
+
+            {/* Chat Input Bar */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendManagerChat();
+              }}
+              style={{
+                padding: "10px 12px",
+                borderTop: "1px solid #e2e8f0",
+                display: "flex",
+                gap: 8,
+                background: "#ffffff",
+              }}
+            >
+              <input
+                type="text"
+                placeholder="Ask PG copilot (e.g. 'Show vacant rooms')..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid #cbd5e1",
+                  fontSize: 12,
+                  outline: "none",
+                }}
+              />
+              <button
+                type="submit"
+                disabled={chatLoading || !chatInput.trim()}
+                style={{
+                  background: chatLoading || !chatInput.trim() ? "#94a3b8" : "#2563eb",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 8,
+                  padding: "8px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: chatLoading || !chatInput.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

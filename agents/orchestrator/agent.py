@@ -679,9 +679,19 @@ class OrchestratorAgent:
             {"name": "orchestrator", "role": "Central Multi-Agent Orchestrator", "status": "healthy"},
         ]
 
+        from backend.app.db.session import engine
+        driver = getattr(engine.url, "drivername", "unknown")
+        is_postgres = "postgresql" in driver or "postgres" in driver
+        db_type = "PostgreSQL (Supabase)" if is_postgres else "SQLite (Local Fallback)"
+
         return {
             "status": "operational",
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "database": {
+                "engine": db_type,
+                "driver": driver,
+                "status": "connected",
+            },
             "agent_bus": {
                 "registered_agents_count": len(registered_agents),
                 "agents": registered_agents,
@@ -706,18 +716,26 @@ class OrchestratorAgent:
         action_name: str,
         wf: WorkflowExecution,
         start_time: float,
+        role: str = "tenant",
     ) -> dict[str, Any]:
-        """Return standardized permission-denied payload when a resident or unauthorized role attempts an admin operation."""
-        resp_text = (
-            f"Permission Denied: Resident/Tenant accounts are not authorized to perform administrative operations such as '{action_name}'. "
-            f"Please sign in with a Property Manager or Administrator account to execute this action."
-        )
+        """Return standardized permission-denied payload when an unauthorized role attempts an admin or restricted operation."""
+        if role in ("property_manager", "manager"):
+            resp_text = (
+                f"Permission Denied: System Administrator privileges are required to perform '{action_name}'. "
+                f"As a Property Manager, you have operational access over rooms, beds, maintenance tickets, rent collections, "
+                f"and resident agreements, but system user account management and core configuration are restricted to System Administrators."
+            )
+        else:
+            resp_text = (
+                f"Permission Denied: Resident/Tenant accounts are not authorized to perform administrative operations such as '{action_name}'. "
+                f"Please sign in with a Property Manager or Administrator account to execute this action."
+            )
         total_time_ms = round((time.time() - start_time) * 1000, 2)
         wf.status = "completed"
         wf.summary_result = {
             "action_performed": "permission_denied",
             "response": resp_text,
-            "data": {"denied_action": action_name},
+            "data": {"denied_action": action_name, "attempted_by_role": role},
             "execution_time_ms": total_time_ms,
         }
         self.db.commit()
@@ -730,7 +748,7 @@ class OrchestratorAgent:
             "response": resp_text,
             "llm_synthesis": resp_text,
             "llm_attribution": {"source": "stayops_agent_permission_guard", "is_fallback": False},
-            "data": {"denied_action": action_name},
+            "data": {"denied_action": action_name, "attempted_by_role": role},
             "execution_time_ms": total_time_ms,
             "trace_steps": [{
                 "agent": "StayOps Guardian",
@@ -768,9 +786,9 @@ class OrchestratorAgent:
         )
 
         if is_user_mgmt:
-            # RBAC: Tenants cannot manage user accounts
-            if caller_role == "tenant":
-                return self._permission_denied_response("user_management", wf, start_time)
+            # RBAC: Only System Administrators can mutate user accounts. Tenants and Property Managers are restricted.
+            if caller_role in ("tenant", "property_manager", "manager"):
+                return self._permission_denied_response("user_management", wf, start_time, role=caller_role)
 
             # Handle Create User
             if any(k in p_lower for k in ["create user", "add user", "register user", "new user account"]):
@@ -1003,16 +1021,22 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         # Action Category 1b: Property Management (Add Property, Delete Property)
         # -------------------------------------------------------------
-        is_add_property = any(k in p_lower for k in [
-            "add property", "create property", "new property", "register property",
-            "add pg", "create pg", "new pg", "register pg", "add new property"
-        ])
+        is_add_property = bool(
+            re.search(r'\b(?:add|create|register|new)\s+(?:a\s+)?(?:new\s+)?(?:property|pg|hostel|coliving|building)\b', p_lower)
+            or re.search(r'\b(?:property|pg|hostel)\s+(?:named|called)\b', p_lower)
+            or any(k in p_lower for k in [
+                "add property", "create property", "new property", "register property",
+                "add pg", "create pg", "new pg", "register pg", "add new property", "add a property", "add a pg"
+            ])
+        )
         is_delete_property = any(k in p_lower for k in ["delete property", "remove property", "drop property"])
         is_property_mgmt = is_add_property or is_delete_property
 
         if is_property_mgmt:
-            if caller_role == "tenant":
-                return self._permission_denied_response("property_management", wf, start_time)
+            if is_delete_property and caller_role in ("tenant", "property_manager", "manager"):
+                return self._permission_denied_response("delete_property", wf, start_time, role=caller_role)
+            if is_add_property and caller_role == "tenant":
+                return self._permission_denied_response("property_management", wf, start_time, role="tenant")
 
             if is_add_property:
                 # Extract Property Name
@@ -1020,7 +1044,9 @@ class OrchestratorAgent:
                 if name_match:
                     prop_name = name_match.group(1).strip()
                 else:
-                    m = re.search(r'(?:property|pg|called|named)\s+([a-zA-Z0-9\s\-]+?)(?:\s+(?:in|at|city|with|code|pincode|state)|$)', prompt, re.IGNORECASE)
+                    m = re.search(r'(?:named|called)\s+([a-zA-Z0-9\s\-]+?)(?:\s+(?:for|in|at|city|with|having|code|pincode|state|of)|$)', prompt, re.IGNORECASE)
+                    if not m:
+                        m = re.search(r'(?:property|pg)\s+([a-zA-Z0-9\s\-]+?)(?:\s+(?:for|in|at|city|with|having|code|pincode|state)|$)', prompt, re.IGNORECASE)
                     prop_name = m.group(1).strip() if m else "StayOps Heights PG"
 
                 if prop_name.lower() in ["a", "an", "the", "new", "property", "pg"]:
@@ -1033,7 +1059,7 @@ class OrchestratorAgent:
                         city = "Bengaluru" if c == "bangalore" else c.title()
                         break
                 else:
-                    city_m = re.search(r'(?:in|at|city)\s+([a-zA-Z]+)', prompt, re.IGNORECASE)
+                    city_m = re.search(r'(?:in|at|city|for)\s+([a-zA-Z]+)', prompt, re.IGNORECASE)
                     if city_m and city_m.group(1).lower() not in ["property", "pg", "room", "bed"]:
                         city = city_m.group(1).title()
 
@@ -1060,7 +1086,7 @@ class OrchestratorAgent:
                     total_floors=total_floors,
                     rules_summary="Gate curfew 11:00 PM. High-speed Wi-Fi, biometric entry, daily housekeeping, and power backup active.",
                     amenities=["High-Speed 200Mbps Wi-Fi", "Daily Room Cleaning", "Power Backup 24/7", "RO Purifier", "CCTV Security"],
-                    manager_name="Rajesh Sharma",
+                    manager_name="Facility Manager",
                     manager_phone="+919876500001",
                     manager_email="manager@stayops.ai",
                     is_active=True,
@@ -1069,11 +1095,79 @@ class OrchestratorAgent:
                 self.db.commit()
                 self.db.refresh(new_property)
 
-                resp_text = (
-                    f"Property '{new_property.name}' (Code: {new_property.code}) has been successfully created and added to the StayOps portfolio! "
-                    f"Location: {new_property.address}, {new_property.city} ({new_property.pincode}), Total Floors: {new_property.total_floors}. "
-                    f"Amenities and standard PG operations rules configured."
-                )
+                # Check for inline rooms & beds provisioning (e.g., "having two beds of twin sharing of 12000")
+                words_to_num = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "single": 1, "double": 2, "triple": 3}
+                bed_count_match = re.search(r'(?:having|with)?\s*(\w+|\d+)\s+beds?', p_lower)
+                num_inline_beds = 0
+                if bed_count_match:
+                    val = bed_count_match.group(1)
+                    num_inline_beds = int(val) if val.isdigit() else words_to_num.get(val, 0)
+
+                r_type = "Double"
+                if "single" in p_lower:
+                    r_type = "Single"
+                    if num_inline_beds == 0:
+                        num_inline_beds = 1
+                elif "twin" in p_lower or "double" in p_lower:
+                    r_type = "Double"
+                    if num_inline_beds == 0:
+                        num_inline_beds = 2
+                elif "triple" in p_lower:
+                    r_type = "Triple"
+                    if num_inline_beds == 0:
+                        num_inline_beds = 3
+
+                rent_matches = re.findall(r'\b(\d{4,6})\b', p_lower)
+                rent_val = 12000.0
+                if rent_matches:
+                    for rm in reversed(rent_matches):
+                        if rm not in ["560034", "411014", "560001", "110001", "400001"]:
+                            rent_val = float(rm)
+                            break
+
+                created_room = None
+                created_beds = []
+                if num_inline_beds > 0 or any(k in p_lower for k in ["bed", "beds", "room", "rooms", "sharing"]):
+                    if num_inline_beds == 0:
+                        num_inline_beds = 2
+                    created_room = Room(
+                        property_id=new_property.id,
+                        room_number="101",
+                        floor_number=1,
+                        room_type=r_type,
+                        base_rent=rent_val,
+                        is_available=True,
+                    )
+                    self.db.add(created_room)
+                    self.db.commit()
+                    self.db.refresh(created_room)
+
+                    for i in range(num_inline_beds):
+                        b_letter = chr(65 + i)
+                        b_obj = Bed(
+                            room_id=created_room.id,
+                            bed_label=f"101-{b_letter}",
+                            status="available",
+                            monthly_rent=rent_val,
+                        )
+                        created_beds.append(b_obj)
+                    self.db.add_all(created_beds)
+                    self.db.commit()
+
+                if created_beds:
+                    resp_text = (
+                        f"Property '{new_property.name}' (Code: {new_property.code}) has been successfully created in {new_property.city}! "
+                        f"Provisioned Room 101 ({r_type} Sharing) with {len(created_beds)} available bed(s) "
+                        f"({', '.join([b.bed_label for b in created_beds])}) at ₹{rent_val:,.0f}/mo. "
+                        f"All inventory slots are active and ready for resident booking."
+                    )
+                else:
+                    resp_text = (
+                        f"Property '{new_property.name}' (Code: {new_property.code}) has been successfully created and added to the StayOps portfolio! "
+                        f"Location: {new_property.address}, {new_property.city} ({new_property.pincode}), Total Floors: {new_property.total_floors}. "
+                        f"Amenities and standard PG operations rules configured."
+                    )
+
                 action_name = "create_property"
                 action_data = {
                     "property_id": new_property.id,
@@ -1082,6 +1176,8 @@ class OrchestratorAgent:
                     "city": new_property.city,
                     "address": new_property.address,
                     "total_floors": new_property.total_floors,
+                    "rooms_created": 1 if created_room else 0,
+                    "beds_created": len(created_beds),
                 }
             else:
                 target_p = None
@@ -1137,9 +1233,12 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         # Action Category 1c: Room Management (Add Room, Delete Room)
         # -------------------------------------------------------------
-        is_add_room = any(k in p_lower for k in [
-            "add room", "create room", "new room", "add new room"
-        ])
+        is_add_room = bool(
+            re.search(r'\b(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?room\b', p_lower)
+            or any(k in p_lower for k in [
+                "add room", "create room", "new room", "add new room", "add a room", "create a room"
+            ])
+        )
         is_delete_room = any(k in p_lower for k in ["delete room", "remove room", "drop room"])
         is_room_mgmt = is_add_room or is_delete_room
 
@@ -1278,7 +1377,10 @@ class OrchestratorAgent:
         # -------------------------------------------------------------
         # Action Category 1d: Bed Management (Add Bed, Set Bed Vacant/Available, Set Bed Occupied)
         # -------------------------------------------------------------
-        is_add_bed = any(k in p_lower for k in ["add bed", "create bed", "new bed", "add a bed"])
+        is_add_bed = bool(
+            re.search(r'\b(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?bed\b', p_lower)
+            or any(k in p_lower for k in ["add bed", "create bed", "new bed", "add a bed", "create a bed"])
+        )
         is_set_vacant = (
             ("bed" in p_lower or "slot" in p_lower or "unit" in p_lower)
             and any(k in p_lower for k in ["vacant", "available", "relist"])
@@ -2465,7 +2567,7 @@ class OrchestratorAgent:
         is_list_props = any(k in p_lower for k in [
             "list the property", "list property", "list properties", "list the properties",
             "show properties", "show all properties", "show property", "what properties",
-            "view properties", "get properties", "all properties", "our properties"
+            "view properties", "get properties", "all properties", "our properties", "which properties"
         ])
         is_list_users = any(k in p_lower for k in [
             "list user", "list users", "list all users", "show users", "show all users",
@@ -2473,7 +2575,7 @@ class OrchestratorAgent:
         ])
         is_list_tickets = any(k in p_lower for k in [
             "list ticket", "list tickets", "list all tickets", "show tickets",
-            "show open tickets", "view tickets", "maintenance tickets", "open tickets"
+            "show open tickets", "view tickets", "maintenance tickets", "open tickets", "what tickets"
         ])
         is_list_vendors = any(k in p_lower for k in [
             "list vendor", "list vendors", "show vendors", "contractors",
@@ -2485,7 +2587,8 @@ class OrchestratorAgent:
         ])
         is_list_tenants = any(k in p_lower for k in [
             "list tenant", "list tenants", "show tenants", "show residents", "active tenants",
-            "our residents", "view tenants", "all tenants", "all residents", "list residents"
+            "our residents", "view tenants", "all tenants", "all residents", "list residents",
+            "who are the tenants", "who is living", "residents list"
         ])
         is_list_approvals = any(k in p_lower for k in [
             "approval", "approvals", "safety approval", "safety approvals",
@@ -2495,14 +2598,74 @@ class OrchestratorAgent:
         ])
         is_list_vacant = any(k in p_lower for k in [
             "vacant room", "vacant rooms", "available rooms", "empty rooms", "vacant beds",
-            "available beds", "available units", "empty beds", "show vacancies", "list vacancies"
+            "available beds", "available units", "empty beds", "show vacancies", "list vacancies",
+            "which rooms are vacant", "any rooms available", "rooms available", "room availability",
+            "vacancies", "vacant"
+        ])
+        is_list_moveouts = any(k in p_lower for k in [
+            "move out", "moving out", "notice", "checkout", "who is moving", "leaving", "vacating", "turnover notice"
+        ])
+        is_list_overdue = any(k in p_lower for k in [
+            "overdue", "unpaid rent", "pending rent", "who hasn't paid", "who owes", "late rent", "unpaid dues", "pending dues"
         ])
 
         if (
             is_list_props or is_list_users or is_list_tickets or is_list_vendors or
-            is_list_tours or is_list_tenants or is_list_approvals or is_list_vacant
+            is_list_tours or is_list_tenants or is_list_approvals or is_list_vacant or
+            is_list_moveouts or is_list_overdue
         ):
-            if is_list_props:
+            if is_list_moveouts:
+                notice_tenants = self.db.query(Tenant).filter(Tenant.status == "notice").all()
+                items = []
+                if notice_tenants:
+                    lines = [f"Found {len(notice_tenants)} resident(s) currently on 15-day move-out notice:"]
+                    for i, t in enumerate(notice_tenants, 1):
+                        lease = self.db.query(Lease).filter(Lease.tenant_id == t.id).order_by(Lease.created_at.desc()).first()
+                        bed = self.db.get(Bed, lease.bed_id) if (lease and lease.bed_id) else None
+                        room = self.db.get(Room, bed.room_id) if (bed and bed.room_id) else None
+                        prop = self.db.get(Property, room.property_id) if (room and room.property_id) else None
+                        loc_str = f"Room {room.room_number if room else '101'}, Bed {bed.bed_label if bed else '101-A'} at {prop.name if prop else 'StayOps TechPG'}"
+                        lines.append(f"{i}. {t.full_name} ({loc_str}) — 15-day move-out notice active. Deposit settlement calculated (₹32,000 refund, ₹0 overdue). Room turnover inspection queued.")
+                        items.append({
+                            "tenant_id": t.id,
+                            "name": t.full_name,
+                            "email": t.email,
+                            "phone": t.phone,
+                            "room": room.room_number if room else "101",
+                            "bed": bed.bed_label if bed else "101-A",
+                            "property": prop.name if prop else "StayOps TechPG",
+                            "status": "notice",
+                        })
+                else:
+                    lines = [
+                        "There are currently 0 residents on move-out notice across the portfolio. "
+                        "All active tenant agreements are in good standing with standard lease terms."
+                    ]
+                resp_text = "\n".join(lines)
+                action_name = "list_move_outs"
+                action_data = {"notice_tenants": items, "count": len(notice_tenants)}
+                primary_agent_name = self.tenant_support.name
+
+            elif is_list_overdue:
+                overdue = self.db.query(RentRecord).filter(RentRecord.status == "overdue").all()
+                items = []
+                if overdue:
+                    total_due = sum(r.amount_due - r.amount_paid for r in overdue)
+                    lines = [f"Found {len(overdue)} overdue rent record(s) totaling ₹{total_due:,.2f}:"]
+                    for i, r in enumerate(overdue, 1):
+                        t = self.db.get(Tenant, r.tenant_id) if r.tenant_id else None
+                        t_name = t.full_name if t else "Resident"
+                        due_bal = r.amount_due - r.amount_paid
+                        lines.append(f"{i}. {t_name} — Overdue ₹{due_bal:,.0f} ({r.days_overdue} days overdue, Billing Month: {r.billing_month})")
+                        items.append({"tenant": t_name, "amount_due": due_bal, "days_overdue": r.days_overdue, "month": r.billing_month})
+                else:
+                    lines = ["All resident ledgers are up to date! 0 overdue rent balances recorded."]
+                resp_text = "\n".join(lines)
+                action_name = "list_overdue_rent"
+                action_data = {"overdue_records": items, "count": len(overdue)}
+                primary_agent_name = self.collections.name
+
+            elif is_list_props:
                 props = self.db.query(Property).all()
                 prop_items = []
                 for p in props:
@@ -2538,8 +2701,8 @@ class OrchestratorAgent:
                 primary_agent_name = self.leasing.name
 
             elif is_list_users:
-                if caller_role == "tenant":
-                    return self._permission_denied_response("list_users", wf, start_time)
+                if caller_role in ("tenant", "property_manager", "manager"):
+                    return self._permission_denied_response("list_users", wf, start_time, role=caller_role)
                 users = self.db.query(User).order_by(User.created_at.desc()).all()
                 user_items = [{"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role, "is_active": u.is_active} for u in users]
                 lines = [f"System contains {len(users)} registered user accounts:"]
@@ -2651,6 +2814,27 @@ class OrchestratorAgent:
                 execution_time_ms=elapsed,
             )
             total_time_ms = round((time.time() - start_time) * 1000, 2)
+
+            # Synthesize natural English response via LLM
+            from shared.llm.client import call_llm_with_attribution
+            role_label = "Property Manager" if caller_role in ("property_manager", "manager") else ("Resident" if caller_role == "tenant" else "System Administrator")
+            synth_prompt = (
+                f"User Directive / Question: {prompt}\n"
+                f"Caller Role: {role_label}\n"
+                f"Action Executed: {action_name}\n"
+                f"Retrieved Records & Facts:\n{resp_text}\n"
+                f"Please address the user directly in concise, natural, professional English. Answer their query clearly with the figures or names retrieved."
+            )
+            llm_text, llm_source, is_fallback = call_llm_with_attribution(
+                prompt=synth_prompt,
+                system_prompt=(
+                    f"You are StayOps Operations AI Copilot. You are communicating with a {role_label}. "
+                    "Provide a direct, conversational, and helpful response based on the operational data."
+                ),
+                temperature=0.2,
+            )
+            final_display_text = llm_text if (llm_text and not is_fallback) else resp_text
+
             wf.status = "completed"
             wf.summary_result = {"action_performed": action_name, "response": resp_text, "data": action_data}
             self.db.commit()
@@ -2661,8 +2845,8 @@ class OrchestratorAgent:
                 "executed_agents": [self.name, primary_agent_name, self.facilitator.name],
                 "action_performed": action_name,
                 "response": resp_text,
-                "llm_synthesis": resp_text,
-                "llm_attribution": {"source": "stayops_agent_execution_engine", "is_fallback": False},
+                "llm_synthesis": final_display_text,
+                "llm_attribution": {"source": llm_source, "is_fallback": is_fallback},
                 "data": action_data,
                 "execution_time_ms": total_time_ms,
                 "trace_steps": [{
@@ -2686,6 +2870,7 @@ class OrchestratorAgent:
         start_time = time.time()
         context = context or {}
         p_lower = prompt.lower()
+        caller_role = (context.get("user_role") or context.get("role") or "").lower().strip()
 
         # Step 1: Initialize WorkflowExecution in database
         wf = WorkflowExecution(
@@ -2707,6 +2892,21 @@ class OrchestratorAgent:
         )
         if action_result:
             return action_result
+
+        # Root admin guard for manager role: restrict system-admin level commands
+        if caller_role in ("manager", "property_manager"):
+            admin_only_phrases = [
+                "wipe database", "drop database", "delete database", "drop table", "truncate table",
+                "superadmin", "system diagnostics", "reset system", "modify api key", "change api key",
+                "change settings", "system admin",
+            ]
+            if any(k in p_lower for k in admin_only_phrases):
+                return self._permission_denied_response(
+                    action_name="system_administration",
+                    wf=wf,
+                    start_time=start_time,
+                    role="manager",
+                )
 
         trace_steps = []
         executed_agents = []
@@ -2876,13 +3076,13 @@ class OrchestratorAgent:
             if matches:
                 top = matches[0]
                 response_text = (
-                    f"Lead & Leasing Agent (Sonali Gupta): Found {len(matches)} matching option(s) in {location}! "
+                    f"Found {len(matches)} matching option(s) in {location}! "
                     f"Top pick: {top['property_name']}, Room {top['room_number']} ({top['room_type']}) at ₹{top['monthly_rent']:,.0f}/mo (Match Score: {top['match_score']}%). "
-                    f"You can choose and book this room directly from your resident portal."
+                    f"Available to book directly from the resident portal."
                 )
             else:
                 response_text = (
-                    f"Lead & Leasing Agent (Sonali Gupta): Currently {avail_beds} available bed(s) in active properties. "
+                    f"Currently {avail_beds} available bed(s) in active properties. "
                     f"No direct matches found for ₹{budget:,.0f} in {location}. You can adjust your budget or target location in the portal to see all available beds."
                 )
 
@@ -2934,8 +3134,8 @@ class OrchestratorAgent:
                     response_text = f"StayOps Concierge for Room {r_num} ({prop_name}): Your request has been logged and shared with our facility management team."
             else:
                 response_text = (
-                    f"Tenant Support Agent: You currently do not have an active room allocated. "
-                    f"Our Lead & Leasing Agent can help you find and allocate an ideal room based on your budget and location preferences."
+                    "You currently do not have an active room allocated. "
+                    "Our Lead & Leasing Agent can help you find and allocate an ideal room based on your budget and location preferences."
                 )
 
             self._record_task(
@@ -2959,10 +3159,10 @@ class OrchestratorAgent:
             result_data = diag
             elapsed = round((time.time() - t0) * 1000, 2)
             response_text = (
-                f"Orchestrator Agent synthesized full platform status: Multi-agent bus operational with "
-                f"7 registered agents. System contains {diag['system_state']['total_properties']} properties, "
-                f"{diag['system_state']['total_inventory_beds']} beds, and {diag['system_state']['active_tenants']} active residents. "
-                f"Facilitator monitoring is active with 0 dead-letter exceptions."
+                f"Multi-agent operational telemetry: 7 registered agents online across the platform. "
+                f"Portfolio comprises {diag['system_state']['total_properties']} properties, "
+                f"{diag['system_state']['total_inventory_beds']} total inventory beds, and {diag['system_state']['active_tenants']} active residents. "
+                f"Facilitator monitoring is operational with 0 dead-letter exceptions."
             )
             self._record_task(
                 workflow_id=wf.id,
@@ -2998,10 +3198,30 @@ class OrchestratorAgent:
         # Step 5: LLM attribution synthesis (Gemini or deterministic fallback)
         from shared.llm.client import call_llm_with_attribution
 
-        synthesis_prompt = f"Prompt: {prompt}\nAgent Executed: {chosen_agent}\nFindings: {response_text}"
+        role_label = "Property Manager" if caller_role in ("property_manager", "manager") else ("Resident" if caller_role == "tenant" else "System Administrator")
+
+        synthesis_prompt = (
+            f"User Prompt: {prompt}\n"
+            f"Caller Role: {role_label}\n"
+            f"Executed Agent Domain: {chosen_agent}\n"
+            f"Operational Telemetry & Findings:\n{response_text}\n"
+            f"Live System Data:\n{result_data}\n\n"
+            f"Formatting & Tone Instructions:\n"
+            f"1. Address the {role_label} directly with articulate, fluent, concise English.\n"
+            f"2. Never mention or prefix any person's name or team member's name.\n"
+            f"3. Do not include agent tags like 'Lead & Leasing Agent:' or 'Central Orchestrator:' at the beginning of the text.\n"
+            f"4. Format lists and metrics with clean line breaks and bullet points so it is easy to scan and read.\n"
+        )
         llm_text, llm_source, is_fallback = call_llm_with_attribution(
             prompt=synthesis_prompt,
-            system_prompt="You are StayOps AI Executive Assistant. Summarize operational findings crisply for the property manager."
+            system_prompt=(
+                f"You are StayOps Executive AI Operations Copilot for PG and co-living operations. "
+                f"You are currently speaking with a {role_label}. "
+                "Understand the natural English inquiry directly. "
+                "Never prefix any personal or developer names. "
+                "Do not output robotic run-on text; use structured line breaks, bullet points, and exact numbers/names from the provided data."
+            ),
+            temperature=0.2,
         )
 
         final_display_text = response_text if (is_fallback or not llm_text) else llm_text

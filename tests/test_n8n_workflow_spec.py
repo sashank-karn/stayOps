@@ -59,3 +59,20 @@ def test_n8n_workflow_contains_all_seven_agents():
         simplified = agent.split()[0]
         assert simplified in node_names, f"Expected agent '{agent}' missing from n8n nodes"
 
+
+def test_n8n_chat_fallback_resilience():
+    """Verify that backend chat gracefully falls back to local orchestrator if n8n returns non-200 or times out."""
+    from backend.app.db.session import SessionLocal
+    from backend.app.api.router import admin_assistant_chat, AdminChatRequest
+    db = SessionLocal()
+    try:
+        req = AdminChatRequest(message="Check pending safety approvals")
+        res = admin_assistant_chat(req, db)
+        assert "response" in res
+        assert "agent" in res
+        assert "action_performed" in res
+        assert res["action_performed"] == "list_approvals"
+    finally:
+        db.close()
+
+

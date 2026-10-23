@@ -46,7 +46,7 @@ def call_llm_with_attribution(
             executor = ThreadPoolExecutor(max_workers=1)
             try:
                 future = executor.submit(llm.invoke, messages)
-                res = future.result(timeout=3.0)
+                res = future.result(timeout=15.0)
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
 
@@ -54,7 +54,15 @@ def call_llm_with_attribution(
             model_label = f"{settings.llm_provider}:{model_name}"
             return str(content).strip(), model_label, False
         except Exception as e:
-            logger.warning("[LLM Client] Live model call failed (%s); reverting to fallback", e)
+            logger.warning("[LLM Client] Live model call failed (%s); attempting flash-lite fallback", e)
+            try:
+                from shared.llm.provider import get_llm
+                fallback_llm = get_llm(model="gemini-3.5-flash-lite", temperature=temperature, request_timeout=15.0)
+                res = fallback_llm.invoke(messages)
+                content = res.content if hasattr(res, "content") else str(res)
+                return str(content).strip(), "gemini:gemini-3.5-flash-lite", False
+            except Exception as e2:
+                logger.warning("[LLM Client] Secondary fallback model failed (%s); reverting to heuristic", e2)
 
 
 

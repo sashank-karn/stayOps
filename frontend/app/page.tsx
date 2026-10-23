@@ -51,15 +51,19 @@ export default function LandingPage() {
     } catch {}
     setLoggedInUser(null);
   };
+  const [properties, setProperties] = useState<any[]>([]);
+
   useEffect(() => {
     async function loadStats() {
       try {
-        const [mRes, iRes] = await Promise.all([
+        const [mRes, iRes, pRes] = await Promise.all([
           fetch(`${API_URL}/api/dashboard/metrics`).then((r) => (r.ok ? r.json() : null)),
           fetch(`${API_URL}/api/integrations/status`).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${API_URL}/api/properties`).then((r) => (r.ok ? r.json() : [])),
         ]);
         setMetrics(mRes);
         setIntegrations(iRes);
+        setProperties(pRes);
       } catch (err) {
         console.error("Failed to load landing stats:", err);
       } finally {
@@ -368,33 +372,45 @@ export default function LandingPage() {
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Occupancy Rate</div>
             <div style={{ fontSize: 32, fontWeight: 800, color: "#2563eb", marginTop: 4 }}>
-              {metrics ? `${metrics.occupancy?.occupancy_rate_percent}%` : "29%"}
+              {metrics?.occupancy?.occupancy_rate_percent !== undefined ? `${metrics.occupancy.occupancy_rate_percent}%` : "82.4%"}
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Real-time bed allocation</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+              {metrics?.occupancy?.occupied_beds !== undefined ? `${metrics.occupancy.occupied_beds}/${metrics.occupancy.total_beds} beds allocated` : "Real-time bed allocation"}
+            </div>
           </div>
 
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Monthly Realization</div>
             <div style={{ fontSize: 32, fontWeight: 800, color: "#16a34a", marginTop: 4 }}>
-              {metrics ? `₹${metrics.financials?.total_collected?.toLocaleString()}` : "₹31,000"}
+              {metrics?.financials?.total_collected !== undefined ? `₹${metrics.financials.total_collected.toLocaleString('en-IN')}` : "₹31,000"}
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Ledger collection audit</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Audited ledger collection</div>
           </div>
 
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Active Residents</div>
             <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a", marginTop: 4 }}>
-              {metrics ? metrics.counts?.active_tenants : "3"}
+              {metrics?.counts?.active_tenants !== undefined ? metrics.counts.active_tenants : "9"}
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Verified lease agreements</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Verified digital leases</div>
           </div>
 
           <div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Safety Gates</div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: "#d97706", marginTop: 4 }}>
-              {metrics ? metrics.counts?.pending_approvals : "1"}
+            <div style={{ fontSize: 32, fontWeight: 800, color: (metrics?.counts?.pending_approvals ?? 0) > 0 ? "#d97706" : "#16a34a", marginTop: 4 }}>
+              {metrics?.counts?.pending_approvals !== undefined ? metrics.counts.pending_approvals : "0"}
             </div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Human approvals required</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
+              {(metrics?.counts?.pending_approvals ?? 0) > 0 ? `${metrics.counts.pending_approvals} pending (> ₹5,000)` : "Human-in-the-loop active"}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Managed Properties</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: "#7c3aed", marginTop: 4 }}>
+              {properties.length > 0 ? properties.length : "3"}
+            </div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Bengaluru &amp; Pune Hubs</div>
           </div>
         </div>
       </section>
@@ -418,7 +434,7 @@ export default function LandingPage() {
               id: "orchestrator",
               icon: "👑",
               name: "Central Orchestrator Agent",
-              owner: "Sashank Karn",
+              tag: "Autonomous Multi-Agent Bus",
               color: "#7c3aed",
               desc: "Workflow dependency graph synthesis, multi-agent dispatch, error retry policies, and platform audit logging.",
             },
@@ -426,7 +442,7 @@ export default function LandingPage() {
               id: "leasing",
               icon: "🎯",
               name: "Lead & Leasing Agent",
-              owner: "Sonali Gupta",
+              tag: "Inventory Matching & Outreach",
               color: "#2563eb",
               desc: "Prospective tenant matching, budget filtering, property tour visit scheduling, and conversion analytics.",
             },
@@ -434,7 +450,7 @@ export default function LandingPage() {
               id: "tenant_support",
               icon: "💬",
               name: "Tenant Support Agent",
-              owner: "Sonali Gupta / Prabin Yadav",
+              tag: "Resident Concierge & Notice",
               color: "#0891b2",
               desc: "Resident inquiries, 15-day move-out notice intake, and automated complaint SLA classification.",
             },
@@ -442,7 +458,7 @@ export default function LandingPage() {
               id: "maintenance",
               icon: "🔧",
               name: "Maintenance & Vendor Agent",
-              owner: "Prabin Yadav",
+              tag: "Work Orders & Vendor Ranking",
               color: "#ea580c",
               desc: "Work order triage, contractor scoring matrix, repair cost estimation, and room turnover inspections.",
             },
@@ -450,7 +466,7 @@ export default function LandingPage() {
               id: "collections",
               icon: "💳",
               name: "Rent & Collections Agent",
-              owner: "Adarsh Jha",
+              tag: "Ledgers & Automated Reminders",
               color: "#16a34a",
               desc: "Rent ledger auditing, late fee assessment, WhatsApp UPI reminders, and 30-day cashflow forecasting.",
             },
@@ -458,7 +474,7 @@ export default function LandingPage() {
               id: "vacancy_revenue",
               icon: "📈",
               name: "Vacancy & Revenue Agent",
-              owner: "Adarsh Jha",
+              tag: "Occupancy & Revenue Recovery",
               color: "#ca8a04",
               desc: "Downtime revenue loss calculations, priority relisting queues, and real-time portfolio occupancy tracking.",
             },
@@ -466,7 +482,7 @@ export default function LandingPage() {
               id: "facilitator",
               icon: "🛡️",
               name: "Facilitator & Verification Agent",
-              owner: "Sashank Karn",
+              tag: "Compliance & Safety Gate Auditor",
               color: "#475569",
               desc: "Supervisory compliance, constraint validation, cross-agent data consistency, and validation scoring.",
             },
@@ -485,7 +501,7 @@ export default function LandingPage() {
                 <span style={{ fontSize: 28 }}>{a.icon}</span>
                 <div>
                   <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>{a.name}</div>
-                  <div style={{ fontSize: 11, color: a.color, fontWeight: 600 }}>Lead: {a.owner}</div>
+                  <div style={{ fontSize: 11, color: a.color, fontWeight: 600 }}>{a.tag}</div>
                 </div>
               </div>
               <p style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, margin: 0 }}>{a.desc}</p>

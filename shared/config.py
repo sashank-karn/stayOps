@@ -46,8 +46,8 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60
 
     # ---- LLM (configurable) ----
-    llm_provider: Literal["openai", "gemini"] = "openai"
-    llm_model: str = "gpt-4o-mini"
+    llm_provider: Literal["openai", "gemini"] = "gemini"
+    llm_model: str = "gemini-3.5-flash-lite"
     llm_temperature: float = 0.2
     openai_api_key: str = ""
     gemini_api_key: str = ""
@@ -110,7 +110,11 @@ class Settings(BaseSettings):
 
     def has_llm_key(self) -> bool:
         """True if the API key for the selected provider is present (no key is leaked)."""
-        return bool(self.openai_api_key if self.llm_provider == "openai" else self.gemini_api_key)
+        if self.llm_provider == "gemini":
+            return bool(self.gemini_api_key)
+        if self.llm_provider == "openai":
+            return bool(self.openai_api_key or self.gemini_api_key)
+        return bool(self.gemini_api_key or self.openai_api_key)
 
 
 @lru_cache

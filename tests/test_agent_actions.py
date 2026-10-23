@@ -283,6 +283,27 @@ def test_agent_viman_nagar_bed_allocation_and_safety_approvals(db_session):
     safety_res = orchestrator.dispatch_interactive_task("Check pending safety approvals")
     assert safety_res["action_performed"] == "list_approvals"
     assert "safety" in safety_res["response"].lower()
+def test_agent_rbac_manager_vs_admin_restrictions(db_session):
+    orchestrator = OrchestratorAgent(db_session)
+    manager_context = {"user_role": "property_manager", "email": "manager@stayops.ai"}
 
+    # 1. Manager attempting to deactivate user -> DENIED (Admin only)
+    deact_res = orchestrator.dispatch_interactive_task("Deactivate user Rohan", context=manager_context)
+    assert deact_res["action_performed"] == "permission_denied"
+    assert deact_res["data"]["denied_action"] == "user_management"
+    assert "System Administrator privileges are required" in deact_res["response"]
 
+    # 2. Manager attempting to delete property -> DENIED (Admin only)
+    del_prop_res = orchestrator.dispatch_interactive_task("Delete property StayOps Heights", context=manager_context)
+    assert del_prop_res["action_performed"] == "permission_denied"
+    assert del_prop_res["data"]["denied_action"] == "delete_property"
 
+    # 3. Manager allowed actions: create maintenance ticket -> ALLOWED
+    ticket_res = orchestrator.dispatch_interactive_task("Create maintenance ticket for kitchen tap leakage", context=manager_context)
+    assert ticket_res["action_performed"] == "create_maintenance_ticket"
+
+    # 4. Manager allowed actions: query move-outs in natural English -> ALLOWED
+    moveout_res = orchestrator.dispatch_interactive_task("Who is moving out?", context=manager_context)
+    assert moveout_res["action_performed"] == "list_move_outs"
+    assert "move-out" in moveout_res["response"].lower()
+    assert "llm_synthesis" in moveout_res
